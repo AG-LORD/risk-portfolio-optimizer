@@ -1,0 +1,17 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+frontend/portfolio-ui/node_modules/
+
+# React build
+frontend/portfolio-ui/build/
+
+# Environment
+.env
+
+# VS Code
+.vscode/

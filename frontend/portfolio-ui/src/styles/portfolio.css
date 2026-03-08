@@ -1,0 +1,56 @@
+.portfolio-input{
+display:flex;
+justify-content:center;
+align-items:center;
+height:90vh;
+background:black;
+}
+
+.portfolio-card{
+background:#071633;
+padding:40px;
+border-radius:12px;
+width:420px;
+display:flex;
+flex-direction:column;
+gap:15px;
+}
+
+.portfolio-card input{
+padding:10px;
+border-radius:6px;
+border:none;
+}
+
+.stock-list{
+display:flex;
+gap:8px;
+flex-wrap:wrap;
+}
+
+.stock-tag{
+background:#1e293b;
+padding:5px 10px;
+border-radius:6px;
+}
+
+.risk-buttons{
+display:flex;
+gap:10px;
+}
+
+.risk-buttons button{
+padding:6px 12px;
+background:#111;
+border:none;
+color:white;
+cursor:pointer;
+}
+
+.optimize{
+background:#22c55e;
+border:none;
+padding:10px;
+border-radius:6px;
+cursor:pointer;
+}

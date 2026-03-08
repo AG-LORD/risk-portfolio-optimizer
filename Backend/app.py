@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import pandas as pd
 
 from data.fetch_data import fetch_data
 from preprocessing.preprocess import calculate_returns
@@ -10,71 +11,160 @@ app = Flask(__name__)
 CORS(app)
 
 
-# -------------------------------
-# Health Check Route
-# -------------------------------
+# ---------------------------------
+# Health Check
+# ---------------------------------
+
 @app.route("/")
 def home():
     return "Backend Running Successfully 🚀"
 
 
-# -------------------------------
-# Portfolio Optimization Route
-# -------------------------------
+# ---------------------------------
+# Stock List (for dropdown)
+# ---------------------------------
+
+@app.route("/stocks", methods=["GET"])
+def get_stocks():
+
+    stocks = [
+        "RELIANCE",
+        "TCS",
+        "INFY",
+        "HDFCBANK",
+        "ICICIBANK",
+        "SBIN",
+        "ITC",
+        "LT",
+        "BAJFINANCE",
+        "AXISBANK"
+    ]
+
+    return jsonify(stocks)
+
+
+# ---------------------------------
+# Portfolio Optimization
+# ---------------------------------
+
 @app.route("/optimize", methods=["POST"])
 def optimize():
+
     try:
+
         data = request.json
 
-        # Validate input
         if not data or "stocks" not in data:
             return jsonify({"error": "Stocks list missing"}), 400
 
         stocks = data["stocks"]
+        investment_amount = data.get("investment", 100000)
+        try:
+            investment_amount = float(investment_amount)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Investment must be a valid number"}), 400
 
-        if not isinstance(stocks, list) or len(stocks) == 0:
-            return jsonify({"error": "Stocks must be a non-empty list"}), 400
+        if investment_amount <= 0:
+            return jsonify({"error": "Investment must be greater than 0"}), 400
 
-        # Fetch price data
-        price_data = fetch_data(stocks)
+        if len(stocks) < 2:
+            return jsonify({"error": "Enter at least 2 stocks"}), 400
+
+
+        # Convert to Yahoo tickers without duplicating suffix.
+        tickers = [
+            s if s.upper().endswith(".NS") else f"{s}.NS"
+            for s in stocks
+        ]
+
+
+        # Fetch data
+        price_data = fetch_data(tickers)
 
         if price_data.empty:
-            return jsonify({"error": "No data fetched for given stocks"}), 400
+            return jsonify({"error": "No market data found"}), 400
+
 
         # Calculate returns
         returns = calculate_returns(price_data)
 
-        # Risk metrics
         mean_returns, cov_matrix = calculate_risk(returns)
 
-        # 🔎 Debug prints (optional, safe here)
-        print("Mean Returns:\n", mean_returns)
-        print("Cov Matrix:\n", cov_matrix)
 
-        # Optimization
+        # Optimize portfolio
         weights, portfolio_return, volatility, sharpe = optimize_portfolio(
-            mean_returns, cov_matrix
+            mean_returns,
+            cov_matrix
         )
 
-        # Allocation dictionary
-        allocation = {
-            stock: round(float(weight), 4)
-            for stock, weight in zip(stocks, weights)
+
+        # -----------------------------
+        # Allocation for Pie Chart
+        # -----------------------------
+
+        allocation_chart = []
+
+        for stock, weight in zip(stocks, weights):
+
+            allocation_chart.append({
+                "name": stock,
+                "value": round(float(weight * 100), 2)
+            })
+
+
+        # -----------------------------
+        # Fake portfolio performance curve
+        # (based on cumulative returns)
+        # -----------------------------
+
+        portfolio_returns = returns.dot(weights)
+
+        cumulative = (1 + portfolio_returns).cumprod()
+
+        performance = []
+
+        for date, value in cumulative.tail(30).items():
+
+            performance.append({
+                "date": str(date.date()),
+                "portfolio": round(value * investment_amount, 2)
+            })
+
+
+        # -----------------------------
+        # Metrics
+        # -----------------------------
+
+        metrics = {
+
+            "portfolio_value": round(performance[-1]["portfolio"], 2),
+
+            "returns": round(float(portfolio_return * 100), 2),
+
+            "sharpe": round(float(sharpe), 2),
+
+            "volatility": round(float(volatility * 100), 2)
+
         }
 
+
         return jsonify({
-            "allocation": allocation,
-            "portfolio_return": round(float(portfolio_return), 6),
-            "portfolio_volatility": round(float(volatility), 6),
-            "sharpe_ratio": round(float(sharpe), 6)
+
+            "performance": performance,
+
+            "allocation": allocation_chart,
+
+            "metrics": metrics
+
         })
 
+
     except Exception as e:
+
         return jsonify({"error": str(e)}), 500
 
 
-# -------------------------------
-# Run Server
-# -------------------------------
+# ---------------------------------
+
 if __name__ == "__main__":
     app.run(debug=True)

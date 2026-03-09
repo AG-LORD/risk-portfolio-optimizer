@@ -12,26 +12,31 @@ import {
   Pie,
   PieChart,
   ResponsiveContainer,
-  Scatter,
-  ScatterChart,
   Tooltip,
   XAxis,
   YAxis
 } from "recharts";
+import TooltipIcon from "../components/TooltipIcon";
 
 const STOCK_COLORS = ["#06b6d4", "#60a5fa", "#34d399", "#f59e0b", "#f87171", "#a78bfa"];
 const SECTOR_COLORS = ["#22c55e", "#0ea5e9", "#f97316", "#eab308", "#ef4444", "#8b5cf6", "#14b8a6"];
 const SIGNAL_LABELS = { BUY: "BUY", HOLD: "HOLD", SELL: "SELL" };
 const RANGE_MAP = { "1M": 21, "3M": 63, "6M": 126, "1Y": 252 };
 
-const METRIC_HELP = {
-  sharpe: "Measures return earned per unit of risk.",
-  volatility: "Standard deviation of portfolio returns.",
-  var_95: "Maximum expected loss at 95% confidence.",
-  cvar_95: "Average loss in the worst 5% scenarios.",
-  max_drawdown: "Largest peak-to-trough decline in the portfolio.",
-  beta: "Sensitivity to NIFTY. <1 defensive, =1 market-like, >1 aggressive.",
+const metricDescriptions = {
+  sharpe: "How much return you get for each unit of risk. Higher is better.",
+  volatility: "How much the portfolio value can fluctuate during the year.",
+  var_95: "Worst expected daily loss in normal conditions (95% confidence).",
+  cvar_95: "Average loss on very bad days when the market crashes.",
+  max_drawdown: "Largest drop from peak value during the investment period.",
+  portfolio_beta: "How sensitive the portfolio is to the overall market movement.",
   diversification_score: "Higher score means better spread across sectors."
+};
+
+const signalDescriptions = {
+  BUY: "The stock shows strong positive momentum. It may be a good time to invest.",
+  HOLD: "The stock is neutral. It is stable but not showing strong momentum yet.",
+  SELL: "The stock momentum is weak right now. It may be better to avoid buying it."
 };
 
 const RISK_HELP = {
@@ -80,8 +85,6 @@ function Dashboard({ onLogout }) {
   const [allocation, setAllocation] = useState([]);
   const [sectorAllocation, setSectorAllocation] = useState([]);
   const [performanceData, setPerformanceData] = useState([]);
-  const [efficientFrontier, setEfficientFrontier] = useState([]);
-  const [optimizedPoint, setOptimizedPoint] = useState(null);
   const [riskContribution, setRiskContribution] = useState([]);
   const [correlationMatrix, setCorrelationMatrix] = useState({ labels: [], values: [] });
 
@@ -157,8 +160,6 @@ function Dashboard({ onLogout }) {
       setAllocation(Array.isArray(data.allocation) ? data.allocation : []);
       setSectorAllocation(Array.isArray(data.sector_allocation) ? data.sector_allocation : []);
       setPerformanceData(Array.isArray(data.performance_curve || data.performance) ? (data.performance_curve || data.performance) : []);
-      setEfficientFrontier(Array.isArray(data.efficient_frontier) ? data.efficient_frontier : []);
-      setOptimizedPoint(data.optimized_portfolio_point || null);
       setRiskContribution(Array.isArray(data.risk_contribution) ? data.risk_contribution : []);
       setCorrelationMatrix(data.correlation_matrix || { labels: [], values: [] });
       setShowResults(true);
@@ -171,6 +172,7 @@ function Dashboard({ onLogout }) {
   };
 
   const getSignalClass = (signal) => `badge badge-${String(signal || "HOLD").toLowerCase()}`;
+  const portfolioSignalExplanation = signalDescriptions[portfolioSignal] || signalDescriptions.HOLD;
 
   const correlationColor = (value) => {
     const v = Number(value);
@@ -240,14 +242,14 @@ function Dashboard({ onLogout }) {
             <div className="section-title">Portfolio Metrics</div>
             <div className="metrics">
               <div className="metric-card"><p>Portfolio Value</p><h3>{formatCurrency(safeMetrics.portfolio_value)}</h3></div>
-              <div className="metric-card"><p>Expected Return</p><h3>{safeMetrics.expected_return ?? "--"}%</h3></div>
-              <div className="metric-card"><p>Sharpe Ratio <span className="info-icon" title={METRIC_HELP.sharpe}>i</span></p><h3>{safeMetrics.sharpe ?? "--"}</h3></div>
-              <div className="metric-card"><p>Volatility <span className="info-icon" title={METRIC_HELP.volatility}>i</span></p><h3>{safeMetrics.volatility ?? "--"}%</h3></div>
-              <div className="metric-card"><p>VaR (95%) <span className="info-icon" title={METRIC_HELP.var_95}>i</span></p><h3>{safeMetrics.var_95 ?? "--"}%</h3></div>
-              <div className="metric-card"><p>CVaR (95%) <span className="info-icon" title={METRIC_HELP.cvar_95}>i</span></p><h3>{safeMetrics.cvar_95 ?? "--"}%</h3></div>
-              <div className="metric-card"><p>Max Drawdown <span className="info-icon" title={METRIC_HELP.max_drawdown}>i</span></p><h3>{safeMetrics.max_drawdown ?? "--"}%</h3></div>
-              <div className="metric-card"><p>Portfolio Beta <span className="info-icon" title={METRIC_HELP.beta}>i</span></p><h3>{safeMetrics.portfolio_beta ?? "--"}</h3></div>
-              <div className="metric-card"><p>Diversification Score <span className="info-icon" title={METRIC_HELP.diversification_score}>i</span></p><h3>{safeMetrics.diversification_score ?? "--"}%</h3></div>
+              <div className="metric-card"><p>Estimated yearly return</p><h3>{safeMetrics.expected_return ?? safeMetrics.returns ?? "--"}%</h3></div>
+              <div className="metric-card"><p>Risk vs Return Score <TooltipIcon text={metricDescriptions.sharpe} /></p><h3>{safeMetrics.sharpe ?? "--"}</h3></div>
+              <div className="metric-card"><p>Expected fluctuation <TooltipIcon text={metricDescriptions.volatility} /></p><h3>{safeMetrics.volatility ?? "--"}%</h3></div>
+              <div className="metric-card"><p>Possible daily loss (95%) <TooltipIcon text={metricDescriptions.var_95} /></p><h3>{safeMetrics.var_95 ?? "--"}%</h3></div>
+              <div className="metric-card"><p>Loss during worst market days (95%) <TooltipIcon text={metricDescriptions.cvar_95} /></p><h3>{safeMetrics.cvar_95 ?? "--"}%</h3></div>
+              <div className="metric-card"><p>Biggest drop seen <TooltipIcon text={metricDescriptions.max_drawdown} /></p><h3>{safeMetrics.max_drawdown ?? "--"}%</h3></div>
+              <div className="metric-card"><p>Market movement sensitivity <TooltipIcon text={metricDescriptions.portfolio_beta} /></p><h3>{safeMetrics.portfolio_beta ?? "--"}</h3></div>
+              <div className="metric-card"><p>Diversification score <TooltipIcon text={metricDescriptions.diversification_score} /></p><h3>{safeMetrics.diversification_score ?? "--"}%</h3></div>
               <div className="metric-card"><p>NIFTY Return</p><h3>{safeMetrics.benchmark_return ?? "--"}%</h3></div>
             </div>
           </section>
@@ -259,22 +261,22 @@ function Dashboard({ onLogout }) {
               <div><span>Sectors Covered</span><strong>{summary.sectors_covered ?? "--"}</strong></div>
               <div><span>Risk Level</span><strong>{String(summary.risk_level || risk).toUpperCase()}</strong></div>
               <div><span>Portfolio Signal</span><strong className={getSignalClass(summary.portfolio_signal || portfolioSignal)}>{summary.portfolio_signal || portfolioSignal}</strong></div>
-              <div><span>Expected Return</span><strong>{summary.expected_return ?? safeMetrics.expected_return ?? "--"}%</strong></div>
+              <div><span>Estimated yearly return</span><strong>{summary.expected_return ?? safeMetrics.expected_return ?? safeMetrics.returns ?? "--"}%</strong></div>
             </div>
           </section>
 
           <section className="panel">
             <div className="section-title">Signals</div>
             <div className="recommendation-card">
-              <p>Recommended Action</p>
-              <h3 className={getSignalClass(portfolioSignal)}>{SIGNAL_LABELS[portfolioSignal] || "HOLD"}</h3>
-              <p>{portfolioSignalReason}</p>
+              <p>Portfolio Signal: <strong className={getSignalClass(portfolioSignal)}>{SIGNAL_LABELS[portfolioSignal] || "HOLD"}</strong></p>
+              <p>Explanation: {portfolioSignalReason || portfolioSignalExplanation}</p>
             </div>
             <div className="signal-grid">
               {signals.map((item) => (
                 <div className="signal-card" key={item.stock}>
                   <p>{item.stock} <em className="sector-tag">{item.sector}</em></p>
                   <div className={getSignalClass(item.signal)}>{SIGNAL_LABELS[item.signal]}</div>
+                  <p>{signalDescriptions[item.signal] || signalDescriptions.HOLD}</p>
                   <span>Confidence: {Math.round((item.confidence || 0) * 100)}%</span>
                 </div>
               ))}
@@ -350,23 +352,6 @@ function Dashboard({ onLogout }) {
                 </ResponsiveContainer>
               </div>
             </div>
-          </section>
-
-          <section className="panel">
-            <div className="section-title">Efficient Frontier</div>
-            <ResponsiveContainer width="100%" height={340}>
-              <ScatterChart>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-                <XAxis dataKey="risk" name="Risk (%)" />
-                <YAxis dataKey="return" name="Return (%)" />
-                <Tooltip formatter={(value) => `${Number(value).toFixed(2)}%`} />
-                <Legend />
-                <Scatter name="Random Portfolios" data={efficientFrontier} fill="#64748b" />
-                {optimizedPoint ? (
-                  <Scatter name="Optimized Portfolio" data={[optimizedPoint]} fill="#ef4444" />
-                ) : null}
-              </ScatterChart>
-            </ResponsiveContainer>
           </section>
 
           <section className="panel">

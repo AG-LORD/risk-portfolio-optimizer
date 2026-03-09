@@ -5,11 +5,51 @@ function LoginPage({ onLogin }) {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+  const [name, setName] = useState("");
 
-  const handleSubmit = (e) => {
+  const [showPassword, setShowPassword] = useState(false);
+  const [isSignup, setIsSignup] = useState(false);
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    onLogin();
+
+    const url = isSignup
+      ? "http://127.0.0.1:5000/signup"
+      : "http://127.0.0.1:5000/login";
+
+    const payload = isSignup
+      ? { name, email, password }
+      : { email, password };
+
+    try {
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || "Something went wrong");
+        return;
+      }
+
+      if (!isSignup) {
+        localStorage.setItem("token", data.token);
+        onLogin();
+      } else {
+        alert("Account created! Please login.");
+        setIsSignup(false);
+      }
+
+    } catch (err) {
+      console.error(err);
+      alert("Server error");
+    }
   };
 
   return (
@@ -18,22 +58,39 @@ function LoginPage({ onLogin }) {
 
       <div className="login-card">
 
-        {/* TITLE */}
-
         <div className="login-title">
 
           <h1>Risk-Aware Portfolio Optimizer</h1>
 
           <p>
-            Sign in to access your portfolio dashboard
+            {isSignup
+              ? "Create an account"
+              : "Sign in to access your portfolio dashboard"}
           </p>
 
         </div>
 
 
-        {/* FORM */}
-
         <form onSubmit={handleSubmit} className="login-form">
+
+          {isSignup && (
+
+            <div className="input-group">
+
+              <label>Name</label>
+
+              <input
+                type="text"
+                placeholder="Your name"
+                value={name}
+                onChange={(e)=>setName(e.target.value)}
+                required
+              />
+
+            </div>
+
+          )}
+
 
           <div className="input-group">
 
@@ -77,16 +134,20 @@ function LoginPage({ onLogin }) {
           </div>
 
 
-          <div className="forgot">
+          {!isSignup && (
 
-            <a href="#">Forgot password?</a>
+            <div className="forgot">
 
-          </div>
+              <a href="#">Forgot password?</a>
+
+            </div>
+
+          )}
 
 
           <button type="submit" className="login-btn">
 
-            Sign In
+            {isSignup ? "Create Account" : "Sign In"}
 
           </button>
 
@@ -95,9 +156,13 @@ function LoginPage({ onLogin }) {
 
         <div className="signup">
 
-          Don't have an account?
+          {isSignup ? "Already have an account?" : "Don't have an account?"}
 
-          <span> Sign up</span>
+          <span onClick={()=>setIsSignup(!isSignup)}>
+
+            {isSignup ? " Sign in" : " Sign up"}
+
+          </span>
 
         </div>
 

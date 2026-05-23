@@ -163,6 +163,149 @@
   align-items: center;
 }
 
+.ensemble-panel {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 18px;
+  padding: 18px;
+  margin-bottom: 18px;
+}
+
+.ensemble-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.ensemble-header .section-title {
+  margin-bottom: 5px;
+}
+
+.ensemble-note {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 0.92rem;
+  max-width: 560px;
+}
+
+.feature-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.feature-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.feature-box label {
+  color: #cbd5e1;
+  font-size: 0.85rem;
+}
+
+.feature-box small {
+  display: block;
+  color: #94a3b8;
+  font-size: 0.78rem;
+  margin-top: 4px;
+}
+
+.ensemble-panel input {
+  width: 100%;
+  padding: 12px 10px;
+  border-radius: 12px;
+  border: 1px solid #334155;
+  background: #020617;
+  color: #f8fafc;
+}
+
+.prediction-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.predict-btn,
+.sample-btn {
+  border: none;
+  border-radius: 12px;
+  color: #ffffff;
+  font-weight: 700;
+  padding: 12px 18px;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.predict-btn {
+  background: linear-gradient(135deg, #38bdf8, #2563eb);
+}
+
+.sample-btn {
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid #334155;
+}
+
+.predict-btn:hover,
+.sample-btn:hover {
+  transform: translateY(-1px);
+}
+
+.model-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(56, 189, 248, 0.12);
+  color: #bae6fd;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 0.9rem;
+}
+
+.status-ready {
+  background: rgba(34, 197, 94, 0.12);
+  color: #a7f3d0;
+}
+
+.status-connecting {
+  background: rgba(59, 130, 246, 0.15);
+  color: #bfdbfe;
+}
+
+.status-connected {
+  background: rgba(34, 197, 94, 0.18);
+  color: #bbf7d0;
+}
+
+.status-error {
+  background: rgba(248, 113, 113, 0.14);
+  color: #fecaca;
+}
+
+.prediction-result {
+  margin-top: 14px;
+  display: inline-flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  color: #a5f3fc;
+  font-weight: 700;
+}
+
+.prediction-result strong {
+  font-size: 1.15rem;
+}
+
+.error-text {
+  margin-top: 10px;
+  color: #fecdd3;
+}
+
 .spinner {
   width: 14px;
   height: 14px;

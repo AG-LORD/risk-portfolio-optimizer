@@ -57,6 +57,14 @@ const RISK_HELP = {
   }
 };
 
+const ENSEMBLE_FEATURES = [
+  { key: "recent_return", label: "Recent Return", description: "Latest price return change." },
+  { key: "volatility", label: "Volatility", description: "Short-term price movement size." },
+  { key: "momentum", label: "Momentum", description: "Direction and speed of trend." },
+  { key: "sector_exposure", label: "Sector Exposure", description: "Industry weight signal." },
+  { key: "risk_score", label: "Risk Score", description: "Risk signal for the asset mix." }
+];
+
 const formatCurrency = (value) => {
   const numeric = Number(value);
   if (Number.isNaN(numeric)) return "--";
@@ -77,6 +85,21 @@ function Dashboard({ onLogout }) {
   const [loading, setLoading] = useState(false);
   const [selectedRange, setSelectedRange] = useState("6M");
 
+  const [ensembleFeatures, setEnsembleFeatures] = useState({
+    recent_return: 0.12,
+    volatility: -0.16,
+    momentum: 0.74,
+    sector_exposure: 1.25,
+    risk_score: -0.08
+  });
+  const [ensembleFeatureMetadata, setEnsembleFeatureMetadata] = useState(ENSEMBLE_FEATURES);
+  const [ensemblePrediction, setEnsemblePrediction] = useState(null);
+  const [ensembleLoading, setEnsembleLoading] = useState(false);
+  const [ensembleError, setEnsembleError] = useState("");
+  const [ensembleStatus, setEnsembleStatus] = useState("Ready");
+  const [ensembleExplanations, setEnsembleExplanations] = useState([]);
+  const [ensembleBasePredictions, setEnsembleBasePredictions] = useState(null);
+
   const [metrics, setMetrics] = useState({});
   const [summary, setSummary] = useState({});
   const [signals, setSignals] = useState([]);
@@ -86,7 +109,6 @@ function Dashboard({ onLogout }) {
   const [sectorAllocation, setSectorAllocation] = useState([]);
   const [performanceData, setPerformanceData] = useState([]);
   const [riskContribution, setRiskContribution] = useState([]);
-  const [correlationMatrix, setCorrelationMatrix] = useState({ labels: [], values: [] });
 
   const safeMetrics = metrics || {};
 
@@ -100,6 +122,8 @@ function Dashboard({ onLogout }) {
         console.error("Failed to load stocks:", error);
       }
     };
+
+    // Feature metadata is bundled in the frontend by default; only load stock list.
     loadStocks();
   }, []);
 
@@ -107,6 +131,58 @@ function Dashboard({ onLogout }) {
     const count = RANGE_MAP[selectedRange] || RANGE_MAP["6M"];
     return performanceData.slice(-count);
   }, [performanceData, selectedRange]);
+
+  const updateEnsembleFeature = (key, value) => {
+    setEnsembleFeatures((prev) => ({
+      ...prev,
+      [key]: Number(value)
+    }));
+  };
+
+  const fillSampleFeatures = () => {
+    setEnsembleFeatures({
+      recent_return: 0.12,
+      volatility: -0.16,
+      momentum: 0.74,
+      sector_exposure: 1.25,
+      risk_score: -0.08
+    });
+    setEnsemblePrediction(null);
+    setEnsembleError("");
+    setEnsembleStatus("Ready");
+  };
+
+  const runEnsemblePrediction = async () => {
+    setEnsembleLoading(true);
+    setEnsembleError("");
+    setEnsemblePrediction(null);
+    setEnsembleStatus("Connecting...");
+
+    try {
+      const response = await fetch("http://localhost:5000/ensemble/explain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ features: ensembleFeatures })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setEnsembleError(data.error || "Failed to get prediction");
+        setEnsembleStatus("Error");
+      } else {
+        const predictionValue = Array.isArray(data.predictions) ? data.predictions[0] : null;
+        setEnsemblePrediction(predictionValue);
+        setEnsembleExplanations(Array.isArray(data.explanations) ? data.explanations : []);
+        setEnsembleBasePredictions(data.base_predictions || null);
+        setEnsembleStatus("Connected");
+      }
+    } catch (error) {
+      console.error(error);
+      setEnsembleError("Backend connection failed");
+      setEnsembleStatus("Error");
+    } finally {
+      setEnsembleLoading(false);
+    }
+  };
 
   const sectorByStock = useMemo(() => {
     const map = {};
@@ -133,7 +209,8 @@ function Dashboard({ onLogout }) {
       alert("Please add at least 2 stocks");
       return;
     }
-    if (!investment) {
+    const investmentValue = Number(investment);
+    if (!investment || Number.isNaN(investmentValue) || investmentValue <= 0) {
       alert("Enter investment amount");
       return;
     }
@@ -143,7 +220,7 @@ function Dashboard({ onLogout }) {
       const response = await fetch("http://localhost:5000/optimize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stocks, investment, risk })
+        body: JSON.stringify({ stocks, investment: investmentValue, risk })
       });
       const data = await response.json();
       if (!response.ok) {
@@ -161,7 +238,6 @@ function Dashboard({ onLogout }) {
       setSectorAllocation(Array.isArray(data.sector_allocation) ? data.sector_allocation : []);
       setPerformanceData(Array.isArray(data.performance_curve || data.performance) ? (data.performance_curve || data.performance) : []);
       setRiskContribution(Array.isArray(data.risk_contribution) ? data.risk_contribution : []);
-      setCorrelationMatrix(data.correlation_matrix || { labels: [], values: [] });
       setShowResults(true);
     } catch (error) {
       console.error(error);
@@ -172,17 +248,14 @@ function Dashboard({ onLogout }) {
   };
 
   const getSignalClass = (signal) => `badge badge-${String(signal || "HOLD").toLowerCase()}`;
-  const portfolioSignalExplanation = signalDescriptions[portfolioSignal] || signalDescriptions.HOLD;
-
-  const correlationColor = (value) => {
-    const v = Number(value);
-    if (Number.isNaN(v)) return "rgba(51,65,85,0.45)";
-    const clamped = Math.max(-1, Math.min(1, v));
-    if (clamped >= 0) {
-      return `rgba(34,197,94,${0.15 + clamped * 0.6})`;
-    }
-    return `rgba(239,68,68,${0.15 + Math.abs(clamped) * 0.6})`;
+  const getEnsembleStatusClass = (status) => {
+    const normalized = String(status || "").toLowerCase();
+    if (normalized.includes("connected")) return "connected";
+    if (normalized.includes("connecting")) return "connecting";
+    if (normalized.includes("error")) return "error";
+    return "ready";
   };
+  const portfolioSignalExplanation = signalDescriptions[portfolioSignal] || signalDescriptions.HOLD;
 
   return (
     <div className="dashboard-page">
@@ -230,6 +303,67 @@ function Dashboard({ onLogout }) {
             </div>
           ))}
         </div>
+
+        <section className="ensemble-panel">
+          <div className="ensemble-header">
+            <div>
+              <div className="section-title">Ensemble Explainability</div>
+              <p className="ensemble-note">Provide feature values and run explainability to see feature contributions.</p>
+            </div>
+          </div>
+          <div className="feature-row">
+            {ensembleFeatureMetadata.map(({ key, label, description }) => (
+              <div key={key} className="feature-box">
+                <label>{label}</label>
+                <input
+                  type="number"
+                  value={ensembleFeatures[key] ?? 0}
+                  step="0.01"
+                  onChange={(e) => updateEnsembleFeature(key, e.target.value)}
+                  aria-label={label}
+                />
+                <small>{description}</small>
+              </div>
+            ))}
+          </div>
+          <div className="prediction-actions">
+            <button className="predict-btn" onClick={runEnsemblePrediction} disabled={ensembleLoading}>
+              {ensembleLoading ? "Predicting..." : "Predict"}
+            </button>
+            <button className="sample-btn" onClick={fillSampleFeatures} type="button">
+              Sample values
+            </button>
+            <span className={`model-badge status-${getEnsembleStatusClass(ensembleStatus)}`}>
+              {ensembleStatus}
+            </span>
+          </div>
+          {ensemblePrediction !== null && (
+            <div className="prediction-result">
+              <div className="prediction-main">
+                <span>Prediction</span>
+                <strong>{Number(ensemblePrediction).toFixed(6)}</strong>
+              </div>
+              <div className="explanation-list">
+                {ensembleExplanations.map(({ key, label, contribution }) => (
+                  <div className="explain-row" key={key}>
+                    <span>{label}</span>
+                    <strong className={Number(contribution) >= 0 ? 'pos' : 'neg'}>{Number(contribution).toFixed(6)}</strong>
+                  </div>
+                ))}
+              </div>
+              {ensembleBasePredictions && (
+                <div className="base-preds">
+                  <small>Base model outputs</small>
+                  <div className="base-row">Ridge: {ensembleBasePredictions.ridge && ensembleBasePredictions.ridge[0] ? Number(ensembleBasePredictions.ridge[0]).toFixed(6) : "--"}</div>
+                  <div className="base-row">RandomForest: {ensembleBasePredictions.random_forest && ensembleBasePredictions.random_forest[0] ? Number(ensembleBasePredictions.random_forest[0]).toFixed(6) : "--"}</div>
+                  <div className="base-row">HGB: {ensembleBasePredictions.hist_gradient_boosting && ensembleBasePredictions.hist_gradient_boosting[0] ? Number(ensembleBasePredictions.hist_gradient_boosting[0]).toFixed(6) : "--"}</div>
+                </div>
+              )}
+            </div>
+          )}
+          {ensembleError && <div className="error-text">{ensembleError}</div>}
+        </section>
+
         <button className="optimize-btn" onClick={optimize} disabled={loading}>
           {loading ? <span className="spinner" /> : null}
           {loading ? "Optimizing..." : "Optimize Portfolio"}
@@ -257,6 +391,7 @@ function Dashboard({ onLogout }) {
           <section className="panel">
             <div className="section-title">Portfolio Summary</div>
             <div className="summary-grid">
+              <div><span>Investment Amount</span><strong>{formatCurrency(summary.investment_amount ?? safeMetrics.investment_amount ?? investment)}</strong></div>
               <div><span>Stocks Selected</span><strong>{summary.stocks_selected ?? stocks.length}</strong></div>
               <div><span>Sectors Covered</span><strong>{summary.sectors_covered ?? "--"}</strong></div>
               <div><span>Risk Level</span><strong>{String(summary.risk_level || risk).toUpperCase()}</strong></div>
@@ -365,35 +500,6 @@ function Dashboard({ onLogout }) {
                 <Bar dataKey="value" name="Risk Contribution (%)" fill="#38bdf8" />
               </BarChart>
             </ResponsiveContainer>
-          </section>
-
-          <section className="panel">
-            <div className="section-title">Correlation Matrix</div>
-            <div className="table-wrap">
-              <table className="indicator-table correlation-table">
-                <thead>
-                  <tr>
-                    <th>Stock</th>
-                    {(correlationMatrix.labels || []).map((label) => <th key={label}>{label}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(correlationMatrix.labels || []).map((rowLabel, rowIdx) => (
-                    <tr key={rowLabel}>
-                      <td>{rowLabel}</td>
-                      {(correlationMatrix.values?.[rowIdx] || []).map((val, colIdx) => (
-                        <td
-                          key={`${rowLabel}-${colIdx}`}
-                          style={{ backgroundColor: correlationColor(val) }}
-                        >
-                          {Number(val).toFixed(2)}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           </section>
 
           <section className="panel">

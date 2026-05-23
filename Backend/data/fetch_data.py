@@ -1,20 +1,11 @@
 import yfinance as yf
 import pandas as pd
 
-def fetch_data(stocks):
 
-    raw = yf.download(
-        stocks,
-        period="2y",
-        interval="1d"
-    )
+def _extract_price_data(raw):
     if raw.empty:
         return pd.DataFrame()
 
-    # yfinance output can vary by version/settings:
-    # - MultiIndex columns for multiple tickers (Price, Ticker)
-    # - Single-level columns for single ticker
-    # - "Adj Close" may be absent; fall back to "Close"
     if isinstance(raw.columns, pd.MultiIndex):
         price_level = raw.columns.get_level_values(0)
         if "Adj Close" in price_level:
@@ -31,6 +22,65 @@ def fetch_data(stocks):
         else:
             return pd.DataFrame()
 
-    data = data.dropna(how="any")
+    data = data.copy()
+    data = data.dropna(axis=1, how="all")
+    if data.empty:
+        return pd.DataFrame()
 
-    return data
+    return data.dropna(how="any")
+
+
+def fetch_data(stocks):
+    requested = list(stocks) if isinstance(stocks, (list, tuple, set, pd.Index)) else [stocks]
+    requested = [str(s) for s in requested]
+
+    raw = yf.download(
+        requested,
+        period="2y",
+        interval="1d"
+    )
+    price_data = _extract_price_data(raw)
+
+    if price_data.empty:
+        failed_tickers = requested
+        for ticker in failed_tickers:
+            print(f"Warning: market data unavailable for {ticker}")
+        return pd.DataFrame(), [], failed_tickers
+
+    valid_tickers = []
+    for ticker in requested:
+        if ticker in price_data.columns and not price_data[ticker].dropna().empty:
+            valid_tickers.append(ticker)
+        else:
+            print(f"Warning: market data unavailable for {ticker}")
+
+    failed_tickers = [ticker for ticker in requested if ticker not in valid_tickers]
+
+    if not valid_tickers:
+        return pd.DataFrame(), [], failed_tickers
+
+    filtered_data = price_data[valid_tickers].copy()
+    filtered_data = filtered_data.dropna(how="any")
+
+    if filtered_data.empty:
+        for ticker in valid_tickers:
+            print(f"Warning: market data unavailable for {ticker}")
+        failed_tickers = requested
+        return pd.DataFrame(), [], failed_tickers
+
+    return filtered_data, valid_tickers, failed_tickers
+
+
+def fetch_benchmark_data(ticker="^NSEI"):
+    raw = yf.download(
+        ticker,
+        period="2y",
+        interval="1d"
+    )
+    data = _extract_price_data(raw)
+    if data.empty:
+        return pd.Series(dtype=float)
+
+    series = data.iloc[:, 0].copy()
+    series.name = "benchmark"
+    return series

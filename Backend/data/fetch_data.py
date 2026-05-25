@@ -30,14 +30,14 @@ def _extract_price_data(raw):
     return data.dropna(how="any")
 
 
-def fetch_data(stocks):
+def fetch_data(stocks, period="2y", interval="1d"):
     requested = list(stocks) if isinstance(stocks, (list, tuple, set, pd.Index)) else [stocks]
     requested = [str(s) for s in requested]
 
     raw = yf.download(
         requested,
-        period="2y",
-        interval="1d"
+        period=period,
+        interval=interval
     )
     price_data = _extract_price_data(raw)
 
@@ -46,6 +46,9 @@ def fetch_data(stocks):
         for ticker in failed_tickers:
             print(f"Warning: market data unavailable for {ticker}")
         return pd.DataFrame(), [], failed_tickers
+
+    if len(requested) == 1 and len(price_data.columns) == 1 and requested[0] not in price_data.columns:
+        price_data = price_data.rename(columns={price_data.columns[0]: requested[0]})
 
     valid_tickers = []
     for ticker in requested:

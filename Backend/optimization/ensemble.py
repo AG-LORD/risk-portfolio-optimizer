@@ -1,5 +1,6 @@
 import os
-from typing import Any, Dict, List, Optional, Sequence
+import logging
+from typing import Optional, Sequence
 
 import joblib
 import numpy as np
@@ -17,6 +18,8 @@ ENSEMBLE_FEATURE_METADATA = [
     {"key": "risk_score", "label": "Risk Score", "description": "Risk signal for the asset mix."},
 ]
 ENSEMBLE_FEATURE_ORDER = [feature["key"] for feature in ENSEMBLE_FEATURE_METADATA]
+VOLATILITY_FEATURE_INDEX = ENSEMBLE_FEATURE_ORDER.index("volatility")
+logger = logging.getLogger(__name__)
 
 
 def extract_ensemble_features_from_price_series(
@@ -32,9 +35,17 @@ def extract_ensemble_features_from_price_series(
     if returns.empty:
         raise ValueError("Not enough price history to calculate features.")
 
-    recent_return = float(prices.pct_change(periods=5).iloc[-1]) if len(prices) >= 6 else float(returns.iloc[-1])
-    volatility = float(returns.rolling(window=20).std().iloc[-1]) if len(returns) >= 20 else float(returns.std())
-    momentum = float(prices.pct_change(periods=20).iloc[-1]) if len(prices) >= 21 else float(returns.tail(5).sum())
+    recent_return = (
+        float((prices.iloc[-1] - prices.iloc[-7]) / prices.iloc[-7])
+        if len(prices) >= 7
+        else float(returns.iloc[-1])
+    )
+    volatility = float(returns.std())
+    momentum = (
+        float((prices.iloc[-1] - prices.iloc[-30]) / prices.iloc[-30])
+        if len(prices) >= 30
+        else float(returns.tail(5).sum())
+    )
 
     if np.isnan(recent_return):
         recent_return = 0.0
@@ -44,7 +55,7 @@ def extract_ensemble_features_from_price_series(
         momentum = 0.0
 
     if risk_score is None:
-        risk_score = -volatility
+        risk_score = 1 - volatility
 
     feature_vector = [
         recent_return,
@@ -56,30 +67,37 @@ def extract_ensemble_features_from_price_series(
     return np.asarray(feature_vector, dtype=float).reshape(1, -1)
 
 
-def build_dummy_ensemble_dataset(n_samples: int = 100, random_state: int = 42) -> pd.DataFrame:
+def build_dummy_ensemble_dataset(n_samples: int = 2000, random_state: int = 42) -> pd.DataFrame:
     rng = np.random.default_rng(random_state)
-    data: Dict[str, Any] = {}
 
-    for key in ENSEMBLE_FEATURE_ORDER:
-        if key == "recent_return":
-            data[key] = rng.normal(0.02, 0.05, size=n_samples)
-        elif key == "volatility":
-            data[key] = np.abs(rng.normal(0.15, 0.05, size=n_samples))
-        elif key == "momentum":
-            data[key] = rng.normal(0.05, 0.15, size=n_samples)
-        elif key == "sector_exposure":
-            data[key] = rng.normal(0.5, 0.3, size=n_samples)
-        elif key == "risk_score":
-            data[key] = rng.normal(-0.1, 0.25, size=n_samples)
+    recent_return = rng.uniform(-0.15, 0.20, size=n_samples)
+    volatility = np.abs(rng.normal(0.18, 0.07, size=n_samples))
+    momentum = rng.uniform(-0.20, 0.25, size=n_samples)
+    sector_exposure = rng.uniform(0.1, 1.5, size=n_samples)
+    risk_score = -0.6 * volatility + 0.4 * momentum + rng.normal(0.0, 0.05, size=n_samples)
 
-    df = pd.DataFrame(data)
-    df["target"] = (
-        0.5 * df["recent_return"]
-        - 1.2 * df["volatility"]
-        + 1.4 * df["momentum"]
-        + 0.8 * df["sector_exposure"]
-        + 0.6 * df["risk_score"]
-        + rng.normal(0.0, 0.1, size=n_samples)
+    target = (
+        0.6 * recent_return
+        - 0.8 * volatility
+        + 1.2 * momentum
+        + 0.3 * sector_exposure
+        + 0.5 * risk_score
+        + rng.normal(0.0, 0.03, size=n_samples)
+    )
+    target = np.clip(target, -0.3, 0.4)
+
+    df = pd.DataFrame({
+        "recent_return": recent_return,
+        "volatility": volatility,
+        "momentum": momentum,
+        "sector_exposure": sector_exposure,
+        "risk_score": risk_score,
+        "target": target,
+    })
+    df["label"] = np.select(
+        [df["target"] > 0.05, df["target"] < -0.05],
+        ["BUY", "SELL"],
+        default="HOLD",
     )
     return df
 
@@ -101,6 +119,20 @@ class SimpleEnsembleModel:
         ]
         self.weights = np.array(weights if weights is not None else [1.0, 1.0, 1.0], dtype=float)
 
+    def _prepare_inference_features(self, X):
+        X = np.asarray(X, dtype=float)
+        if X.ndim == 1:
+            X = X.reshape(1, -1)
+
+        if X.shape[1] > VOLATILITY_FEATURE_INDEX:
+            negative_volatility = X[:, VOLATILITY_FEATURE_INDEX] < 0
+            if np.any(negative_volatility):
+                logger.warning("Negative volatility feature received during inference; clipping to 0.0.")
+                X = X.copy()
+                X[negative_volatility, VOLATILITY_FEATURE_INDEX] = 0.0
+
+        return X
+
     def fit(self, X, y):
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
@@ -115,14 +147,14 @@ class SimpleEnsembleModel:
         return self
 
     def predict(self, X):
-        X = np.asarray(X, dtype=float)
+        X = self._prepare_inference_features(X)
         X_scaled = self.scaler.transform(X)
 
         predictions = np.column_stack([model.predict(X_scaled) for model in self.base_models])
         return np.average(predictions, axis=1, weights=self.weights)
 
     def get_base_predictions(self, X):
-        X = np.asarray(X, dtype=float)
+        X = self._prepare_inference_features(X)
         X_scaled = self.scaler.transform(X)
         return [model.predict(X_scaled) for model in self.base_models]
 

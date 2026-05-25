@@ -29,24 +29,30 @@ def _moving_average_signal(sma20, sma50):
 def _rsi_signal(rsi_value):
     if np.isnan(rsi_value):
         return "HOLD"
-    if rsi_value < 30:
+    if rsi_value < 35:
         return "BUY"
-    if rsi_value > 70:
+    if rsi_value > 65:
         return "SELL"
     return "HOLD"
 
 
-def _momentum_signal(price_series):
+def _calculate_10d_momentum(price_series):
     if price_series.empty or len(price_series) < 11:
-        return "HOLD"
+        return np.nan
 
     momentum_10d = float(price_series.pct_change(periods=10).iloc[-1])
+    return momentum_10d
+
+
+def _momentum_signal(price_series):
+    momentum_10d = _calculate_10d_momentum(price_series)
 
     if np.isnan(momentum_10d):
         return "HOLD"
-    if momentum_10d > 0.03:
+
+    if momentum_10d > 0.02:
         return "BUY"
-    if momentum_10d < -0.03:
+    if momentum_10d < -0.02:
         return "SELL"
     return "HOLD"
 
@@ -57,14 +63,10 @@ def _combined_signal(rsi_value, sma20, sma50, price_series):
 
     score = 0
 
-    if rsi_value < 30:
+    if rsi_value < 35:
         score += 2
-    elif rsi_value < 40:
-        score += 1
-    elif rsi_value > 70:
+    elif rsi_value > 65:
         score -= 2
-    elif rsi_value > 60:
-        score -= 1
 
     if sma20 > sma50:
         score += 1
@@ -87,8 +89,7 @@ def _combined_signal(rsi_value, sma20, sma50, price_series):
 def _confidence_from_rsi(rsi_value):
     if np.isnan(rsi_value):
         return 0.0
-    confidence = abs(float(rsi_value) - 50.0) / 50.0
-    return float(np.clip(confidence, 0.0, 1.0))
+    return float(min(1.0, abs(float(rsi_value) - 50.0) / 30.0))
 
 
 def _resolve_price_series(price_data, stock, ticker):
@@ -115,7 +116,11 @@ def generate_signals(price_data, stocks, tickers):
                 "confidence": 0.0,
                 "rsi": None,
                 "sma20": None,
-                "sma50": None
+                "sma50": None,
+                "momentum_10d": None,
+                "rsi_signal": "HOLD",
+                "ma_signal": "HOLD",
+                "momentum_signal": "HOLD"
             })
             continue
 
@@ -124,6 +129,7 @@ def generate_signals(price_data, stocks, tickers):
         sma20 = float(price_series.rolling(window=20, min_periods=20).mean().iloc[-1])
         sma50 = float(price_series.rolling(window=50, min_periods=50).mean().iloc[-1])
 
+        momentum_10d = _calculate_10d_momentum(price_series)
         momentum_signal = _momentum_signal(price_series)
         signal = _combined_signal(rsi_value, sma20, sma50, price_series)
         confidence = _confidence_from_rsi(rsi_value)
@@ -136,6 +142,7 @@ def generate_signals(price_data, stocks, tickers):
             "rsi": None if np.isnan(rsi_value) else round(rsi_value, 2),
             "sma20": None if np.isnan(sma20) else round(sma20, 2),
             "sma50": None if np.isnan(sma50) else round(sma50, 2),
+            "momentum_10d": None if np.isnan(momentum_10d) else round(momentum_10d, 6),
             "rsi_signal": _rsi_signal(rsi_value),
             "ma_signal": _moving_average_signal(sma20, sma50),
             "momentum_signal": momentum_signal
@@ -152,8 +159,8 @@ def generate_portfolio_signal(signals):
     buy_count = sum(1 for item in signals if item.get("signal") == "BUY")
     sell_count = sum(1 for item in signals if item.get("signal") == "SELL")
 
-    if buy_count / total > 0.6:
+    if buy_count / total >= 0.5:
         return "BUY"
-    if sell_count / total > 0.6:
+    if sell_count / total >= 0.5:
         return "SELL"
     return "HOLD"

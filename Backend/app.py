@@ -111,6 +111,18 @@ PORTFOLIO_SIGNAL_REASONS = {
     "HOLD": "Signals are mixed, so waiting is prudent."
 }
 
+OPTIMIZATION_MODE_LABELS = {
+    "min_variance": "Minimize Risk",
+    "max_sharpe": "Maximize Return Score",
+    "max_return": "Maximize Expected Return"
+}
+
+RISK_LEVEL_OPTIMIZATION_MODES = {
+    "low": "min_variance",
+    "medium": "max_sharpe",
+    "high": "max_return"
+}
+
 
 # -----------------------------
 # Health Check API
@@ -146,6 +158,120 @@ def get_ensemble_model():
     return ENSEMBLE_MODEL
 
 
+def normalize_nse_ticker(symbol):
+    ticker = str(symbol or "").strip().upper()
+    if not ticker:
+        raise ValueError("ticker must be a non-empty string.")
+    return ticker if ticker.endswith(".NS") else f"{ticker}.NS"
+
+
+def ticker_to_stock_symbol(ticker):
+    return str(ticker or "").replace(".NS", "").upper()
+
+
+def calculate_dynamic_sector_exposure(ticker, data):
+    portfolio_stocks = data.get("portfolio_stocks") or data.get("stocks") or []
+    if not isinstance(portfolio_stocks, list):
+        portfolio_stocks = []
+
+    cleaned_stocks = [ticker_to_stock_symbol(stock) for stock in portfolio_stocks if str(stock or "").strip()]
+    current_stock = ticker_to_stock_symbol(ticker)
+    if current_stock and current_stock not in cleaned_stocks:
+        cleaned_stocks.append(current_stock)
+
+    if not cleaned_stocks:
+        return 1.0
+
+    current_sector = get_sector(current_stock)
+    sector_count = sum(1 for stock in cleaned_stocks if get_sector(stock) == current_sector)
+    return float(sector_count / len(cleaned_stocks))
+
+
+def feature_support_label(key, value):
+    value = float(value)
+    if key == "recent_return":
+        if value > 0.05:
+            return "BUY"
+        if value < -0.05:
+            return "SELL"
+        return "HOLD"
+    if key == "volatility":
+        if value < 0.02:
+            return "BUY"
+        if value > 0.04:
+            return "SELL"
+        return "HOLD"
+    if key == "momentum":
+        if value > 0.05:
+            return "BUY"
+        if value < -0.05:
+            return "SELL"
+        return "HOLD"
+    if key == "sector_exposure":
+        if value > 0.6:
+            return "SELL"
+        if value < 0.35:
+            return "BUY"
+        return "HOLD"
+    if key == "risk_score":
+        if value > 0.98:
+            return "BUY"
+        if value < 0.96:
+            return "SELL"
+        return "HOLD"
+    return "HOLD"
+
+
+def feature_plain_explanation(key, value):
+    value = float(value)
+    if key == "recent_return":
+        direction = "gained" if value >= 0 else "fell"
+        return f"The stock {direction} {abs(value) * 100:.2f}% in the last 7 trading days."
+    if key == "volatility":
+        return f"Daily price swings are around {value * 100:.2f}%; lower swings usually mean lower risk."
+    if key == "momentum":
+        if value > 0:
+            return f"The 30-day trend is upward by {value * 100:.2f}%."
+        if value < 0:
+            return f"The 30-day trend is downward by {abs(value) * 100:.2f}%."
+        return "The 30-day trend is flat."
+    if key == "sector_exposure":
+        return f"About {value * 100:.2f}% of the selected stocks are in this stock's sector."
+    if key == "risk_score":
+        return f"The risk score is {value:.2f}; higher means the stock looks more stable."
+    return "Calculated from recent market data."
+
+
+def format_dynamic_feature_details(features):
+    first_row = np.asarray(features, dtype=float)[0]
+    details = []
+    for meta, value in zip(ENSEMBLE_FEATURE_METADATA, first_row):
+        details.append({
+            "key": meta["key"],
+            "label": meta.get("label", meta["key"]),
+            "value": float(value),
+            "support": feature_support_label(meta["key"], value),
+            "description": feature_plain_explanation(meta["key"], value),
+        })
+    return details
+
+
+def calculate_dynamic_ensemble_features(data):
+    ticker = normalize_nse_ticker(data.get("ticker"))
+    sector_exposure = calculate_dynamic_sector_exposure(ticker, data)
+
+    price_data, valid_tickers, failed_tickers = fetch_data([ticker], period="6mo", interval="1d")
+    if not valid_tickers:
+        raise ValueError(f"Unable to fetch price data for ticker {ticker}")
+
+    features = extract_ensemble_features_from_price_series(
+        price_data[valid_tickers[0]],
+        sector_exposure=sector_exposure,
+        risk_score=None,
+    )
+    return features, format_dynamic_feature_details(features), ticker_to_stock_symbol(ticker)
+
+
 def parse_features(data):
     if "features" in data:
         features = data["features"]
@@ -154,33 +280,8 @@ def parse_features(data):
     elif "feature_matrix" in data:
         features = data["feature_matrix"]
     elif "ticker" in data:
-        ticker = str(data["ticker"]).strip()
-        if not ticker:
-            raise ValueError("ticker must be a non-empty string.")
-        if not ticker.upper().endswith(".NS"):
-            ticker = f"{ticker}.NS"
-
-        try:
-            sector_exposure = float(data.get("sector_exposure", 0.0))
-        except (TypeError, ValueError):
-            sector_exposure = 0.0
-
-        risk_score = data.get("risk_score", None)
-        if risk_score is not None:
-            try:
-                risk_score = float(risk_score)
-            except (TypeError, ValueError):
-                raise ValueError("risk_score must be a number if provided.")
-
-        price_data, valid_tickers, failed_tickers = fetch_data([ticker])
-        if not valid_tickers:
-            raise ValueError(f"Unable to fetch price data for ticker {ticker}")
-
-        return extract_ensemble_features_from_price_series(
-            price_data[valid_tickers[0]],
-            sector_exposure=sector_exposure,
-            risk_score=risk_score,
-        )
+        features, _, _ = calculate_dynamic_ensemble_features(data)
+        return features
     else:
         raise ValueError("Request JSON must include 'features', 'feature_vector', 'feature_matrix', or 'ticker'.")
 
@@ -221,7 +322,13 @@ def ensemble_explain():
         return jsonify({"error": "JSON body required"}), 400
 
     try:
-        features = parse_features(data)
+        feature_details = None
+        analyzed_stock = None
+        if "ticker" in data and not any(key in data for key in ("features", "feature_vector", "feature_matrix")):
+            features, feature_details, analyzed_stock = calculate_dynamic_ensemble_features(data)
+        else:
+            features = parse_features(data)
+
         model = get_ensemble_model()
 
         # Primary prediction
@@ -268,8 +375,10 @@ def ensemble_explain():
 
         return jsonify({
             "predictions": [float(x) for x in predictions],
+            "features": feature_details or format_dynamic_feature_details(features),
             "explanations": explanations,
             "base_predictions": base_predictions,
+            "analyzed_stock": analyzed_stock,
             "model": "simple_ensemble"
         })
     except Exception as e:
@@ -341,7 +450,10 @@ def optimize():
         market_proxy_returns = returns.mean(axis=1)  
         market_volatility_annual = float(market_proxy_returns.std() * np.sqrt(TRADING_DAYS))
 
-        optimize_mode = "min_variance" if market_volatility_annual > MARKET_VOLATILITY_THRESHOLD else "max_sharpe"
+        if market_volatility_annual > MARKET_VOLATILITY_THRESHOLD:
+            optimize_mode = "min_variance"
+        else:
+            optimize_mode = RISK_LEVEL_OPTIMIZATION_MODES.get(risk_level, "max_sharpe")
         # Adjust strategy based on market condition
 
 
@@ -449,6 +561,7 @@ def optimize():
             "max_drawdown": round(max_drawdown_percent, 2),
             "diversification_score": round(float(diversification_score), 2),
             "optimize_mode": optimize_mode,
+            "optimization_method": OPTIMIZATION_MODE_LABELS.get(optimize_mode, "Maximize Return Score"),
             "market_volatility_annual": round(float(market_volatility_annual), 6),
             "removed_stocks": removed_stocks
         }
@@ -460,6 +573,8 @@ def optimize():
             "stocks_selected": len(valid_stocks),
             "sectors_covered": invested_sector_count,
             "risk_level": risk_level,
+            "optimize_mode": optimize_mode,
+            "optimization_method": OPTIMIZATION_MODE_LABELS.get(optimize_mode, "Maximize Return Score"),
             "portfolio_signal": portfolio_signal,
             "expected_return": round(expected_return_percent, 2)
         }

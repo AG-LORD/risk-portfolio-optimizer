@@ -72,7 +72,10 @@ def optimize_portfolio(
     }]
     # Constraint: sum of all weights must be 1 (100% investment)
 
-    max_weight = max(MAX_WEIGHT_PER_STOCK, 1 / num_assets)
+    max_weight = max(
+        1 / num_assets,
+        min(MAX_WEIGHT_PER_STOCK, max(1 / num_assets + 0.10, 0.20))
+    )
     bounds = tuple((0, max_weight) for _ in range(num_assets))  
     # Cap concentration while keeping the problem feasible for small baskets
 
@@ -80,18 +83,28 @@ def optimize_portfolio(
     # Start with equal allocation across all stocks
 
 
-    # Define objective function based on risk level
-    if risk_key == "low":
-        objective = lambda w: portfolio_volatility(w, cov_matrix)  
-        # Minimize risk (conservative)
+    mode_key = (optimize_mode or "auto").lower()
+    if mode_key == "auto":
+        if risk_key == "low":
+            mode_key = "min_variance"
+        elif risk_key == "high":
+            mode_key = "max_return"
+        else:
+            mode_key = "max_sharpe"
 
-    elif risk_key == "high":
+
+    # Define objective function based on explicit mode, with risk level as fallback
+    if mode_key == "min_variance":
+        objective = lambda w: portfolio_volatility(w, cov_matrix)  
+        # Minimize risk
+
+    elif mode_key == "max_return":
         objective = lambda w: -portfolio_return(w, mean_returns)  
-        # Maximize return (aggressive)
+        # Maximize expected return
 
     else:
         objective = lambda w: negative_sharpe(w, mean_returns, cov_matrix)  
-        # Maximize risk-adjusted return (balanced)
+        # Maximize risk-adjusted return
 
 
     result = minimize(

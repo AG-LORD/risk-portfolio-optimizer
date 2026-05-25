@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import "../styles/dashboard.css";
 import {
   Bar,
@@ -23,47 +23,91 @@ const SECTOR_COLORS = ["#22c55e", "#0ea5e9", "#f97316", "#eab308", "#ef4444", "#
 const SIGNAL_LABELS = { BUY: "BUY", HOLD: "HOLD", SELL: "SELL" };
 const RANGE_MAP = { "1M": 21, "3M": 63, "6M": 126, "1Y": 252 };
 
-const metricDescriptions = {
-  sharpe: "How much return you get for each unit of risk. Higher is better.",
-  volatility: "How much the portfolio value can fluctuate during the year.",
-  var_95: "Worst expected daily loss in normal conditions (95% confidence).",
-  cvar_95: "Average loss on very bad days when the market crashes.",
-  max_drawdown: "Largest drop from peak value during the investment period.",
-  portfolio_beta: "How sensitive the portfolio is to the overall market movement.",
-  diversification_score: "Higher score means better spread across sectors."
-};
-
-const signalDescriptions = {
-  BUY: "The stock shows strong positive momentum. It may be a good time to invest.",
-  HOLD: "The stock is neutral. It is stable but not showing strong momentum yet.",
-  SELL: "The stock momentum is weak right now. It may be better to avoid buying it."
+const metricCopy = {
+  expected_return: {
+    label: "Estimated yearly return",
+    tooltip: "This estimates how much your portfolio may gain in a year based on recent data."
+  },
+  sharpe: {
+    label: "Return vs Risk Score (higher = better)",
+    tooltip: "This shows how much return you get for the risk you take; higher is better."
+  },
+  volatility: {
+    label: "How much prices swing day-to-day",
+    tooltip: "If your portfolio has 20% volatility, it could swing up or down by about 20% in a year; higher means more risk."
+  },
+  var_95: {
+    label: "Possible daily loss on a bad day (95% confidence)",
+    tooltip: "This estimates a daily loss level that should only be exceeded on unusually bad days."
+  },
+  cvar_95: {
+    label: "Loss during worst market days (average)",
+    tooltip: "This estimates the average loss when days are worse than the normal bad-day estimate."
+  },
+  max_drawdown: {
+    label: "Biggest drop seen from peak to bottom",
+    tooltip: "This shows the largest fall from a previous high point during the measured period."
+  },
+  portfolio_beta: {
+    label: "How much your portfolio moves with the market (1 = same as NIFTY)",
+    tooltip: "A value near 1 means your portfolio tends to move like NIFTY; higher means stronger market movement."
+  },
+  diversification_score: {
+    label: "How spread out your investments are (higher = safer mix)",
+    tooltip: "This shows how well your money is spread across sectors; higher usually means less concentration risk."
+  },
+  benchmark_return: {
+    label: "NIFTY yearly return",
+    tooltip: "This shows the estimated yearly return of the NIFTY benchmark over the same data period."
+  },
+  portfolio_value: {
+    label: "Current estimated portfolio value",
+    tooltip: "This estimates what your invested amount would be worth after applying the portfolio's recent performance."
+  }
 };
 
 const RISK_HELP = {
   low: {
     title: "LOW",
-    sub: "Target Volatility < 10%",
-    desc: "Conservative portfolio with stable returns."
+    sub: "Stable, lower returns",
+    desc: "You want stability. Less profit but less chance of big losses."
   },
   medium: {
     title: "MEDIUM",
-    sub: "Target Volatility < 20%",
-    desc: "Balanced risk and return."
+    sub: "Balanced risk and return",
+    desc: "Some risk, some reward. Good for most people."
   },
   high: {
     title: "HIGH",
-    sub: "Target Volatility < 35%",
-    desc: "Aggressive growth with higher volatility."
+    sub: "Aggressive growth, higher swings",
+    desc: "Maximum growth with larger price swings."
   }
 };
 
-const ENSEMBLE_FEATURES = [
-  { key: "recent_return", label: "Recent Return", description: "Latest price return change." },
-  { key: "volatility", label: "Volatility", description: "Short-term price movement size." },
-  { key: "momentum", label: "Momentum", description: "Direction and speed of trend." },
-  { key: "sector_exposure", label: "Sector Exposure", description: "Industry weight signal." },
-  { key: "risk_score", label: "Risk Score", description: "Risk signal for the asset mix." }
+const GUIDE_STEPS = [
+  {
+    title: "Pick your stocks",
+    body: "Choose 2 or more companies from the NIFTY 50 list. The more different sectors, the safer your mix."
+  },
+  {
+    title: "Set your investment",
+    body: "Enter how much money (in ₹) you want to invest."
+  },
+  {
+    title: "Choose your risk level",
+    body: "LOW: You want stability. Less profit but less chance of big losses. Good if you can't afford to lose much. MEDIUM: Balanced approach. Some risk, some reward. Good for most people. HIGH: You're chasing maximum growth and are okay if the value drops sometimes."
+  },
+  {
+    title: "Click Optimize",
+    body: "We'll run the math and tell you the best way to split your money across your chosen stocks."
+  }
 ];
+
+const OPTIMIZATION_METHOD_LABELS = {
+  min_variance: "Minimize Risk",
+  max_sharpe: "Maximize Return Score",
+  max_return: "Maximize Estimated Return"
+};
 
 const formatCurrency = (value) => {
   const numeric = Number(value);
@@ -84,27 +128,21 @@ function Dashboard({ onLogout }) {
   const [showResults, setShowResults] = useState(false);
   const [loading, setLoading] = useState(false);
   const [selectedRange, setSelectedRange] = useState("6M");
+  const [showGuide, setShowGuide] = useState(false);
+  const [guideStep, setGuideStep] = useState(0);
 
-  const [ensembleFeatures, setEnsembleFeatures] = useState({
-    recent_return: 0.12,
-    volatility: -0.16,
-    momentum: 0.74,
-    sector_exposure: 1.25,
-    risk_score: -0.08
-  });
-  const [ensembleFeatureMetadata, setEnsembleFeatureMetadata] = useState(ENSEMBLE_FEATURES);
   const [ensemblePrediction, setEnsemblePrediction] = useState(null);
   const [ensembleLoading, setEnsembleLoading] = useState(false);
   const [ensembleError, setEnsembleError] = useState("");
-  const [ensembleStatus, setEnsembleStatus] = useState("Ready");
+  const [ensembleStatus, setEnsembleStatus] = useState("Select a stock");
   const [ensembleExplanations, setEnsembleExplanations] = useState([]);
-  const [ensembleBasePredictions, setEnsembleBasePredictions] = useState(null);
+  const [ensembleFeatureCards, setEnsembleFeatureCards] = useState([]);
+  const [analyzedStock, setAnalyzedStock] = useState("");
 
   const [metrics, setMetrics] = useState({});
   const [summary, setSummary] = useState({});
   const [signals, setSignals] = useState([]);
   const [portfolioSignal, setPortfolioSignal] = useState("HOLD");
-  const [portfolioSignalReason, setPortfolioSignalReason] = useState("");
   const [allocation, setAllocation] = useState([]);
   const [sectorAllocation, setSectorAllocation] = useState([]);
   const [performanceData, setPerformanceData] = useState([]);
@@ -125,6 +163,10 @@ function Dashboard({ onLogout }) {
 
     // Feature metadata is bundled in the frontend by default; only load stock list.
     loadStocks();
+
+    if (localStorage.getItem("hasSeenGuide") !== "true") {
+      setShowGuide(true);
+    }
   }, []);
 
   const filteredPerformance = useMemo(() => {
@@ -132,37 +174,31 @@ function Dashboard({ onLogout }) {
     return performanceData.slice(-count);
   }, [performanceData, selectedRange]);
 
-  const updateEnsembleFeature = (key, value) => {
-    setEnsembleFeatures((prev) => ({
-      ...prev,
-      [key]: Number(value)
-    }));
-  };
+  const selectedAiStock = useMemo(() => symbol || stocks[stocks.length - 1] || "", [symbol, stocks]);
 
-  const fillSampleFeatures = () => {
-    setEnsembleFeatures({
-      recent_return: 0.12,
-      volatility: -0.16,
-      momentum: 0.74,
-      sector_exposure: 1.25,
-      risk_score: -0.08
-    });
-    setEnsemblePrediction(null);
-    setEnsembleError("");
-    setEnsembleStatus("Ready");
-  };
+  const runEnsemblePrediction = useCallback(async (tickerToAnalyze, portfolioStocks) => {
+    if (!tickerToAnalyze) {
+      setEnsemblePrediction(null);
+      setEnsembleExplanations([]);
+      setEnsembleFeatureCards([]);
+      setAnalyzedStock("");
+      setEnsembleStatus("Select a stock");
+      return;
+    }
 
-  const runEnsemblePrediction = async () => {
     setEnsembleLoading(true);
     setEnsembleError("");
     setEnsemblePrediction(null);
-    setEnsembleStatus("Connecting...");
+    setEnsembleStatus("Calculating...");
 
     try {
       const response = await fetch("http://localhost:5000/ensemble/explain", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ features: ensembleFeatures })
+        body: JSON.stringify({
+          ticker: tickerToAnalyze,
+          portfolio_stocks: portfolioStocks && portfolioStocks.length ? portfolioStocks : [tickerToAnalyze]
+        })
       });
       const data = await response.json();
       if (!response.ok) {
@@ -172,7 +208,8 @@ function Dashboard({ onLogout }) {
         const predictionValue = Array.isArray(data.predictions) ? data.predictions[0] : null;
         setEnsemblePrediction(predictionValue);
         setEnsembleExplanations(Array.isArray(data.explanations) ? data.explanations : []);
-        setEnsembleBasePredictions(data.base_predictions || null);
+        setEnsembleFeatureCards(Array.isArray(data.features) ? data.features : []);
+        setAnalyzedStock(data.analyzed_stock || tickerToAnalyze);
         setEnsembleStatus("Connected");
       }
     } catch (error) {
@@ -182,7 +219,11 @@ function Dashboard({ onLogout }) {
     } finally {
       setEnsembleLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    runEnsemblePrediction(selectedAiStock, stocks);
+  }, [runEnsemblePrediction, selectedAiStock, stocks]);
 
   const sectorByStock = useMemo(() => {
     const map = {};
@@ -233,7 +274,6 @@ function Dashboard({ onLogout }) {
       setSummary(data.portfolio_summary || {});
       setSignals(Array.isArray(data.signals) ? data.signals : []);
       setPortfolioSignal(data.portfolio_signal || "HOLD");
-      setPortfolioSignalReason(data.portfolio_signal_reason || "");
       setAllocation(Array.isArray(data.allocation) ? data.allocation : []);
       setSectorAllocation(Array.isArray(data.sector_allocation) ? data.sector_allocation : []);
       setPerformanceData(Array.isArray(data.performance_curve || data.performance) ? (data.performance_curve || data.performance) : []);
@@ -248,6 +288,174 @@ function Dashboard({ onLogout }) {
   };
 
   const getSignalClass = (signal) => `badge badge-${String(signal || "HOLD").toLowerCase()}`;
+  const formatRsi = (rsi) => {
+    const numeric = Number(rsi);
+    return Number.isNaN(numeric) ? "--" : numeric.toFixed(2);
+  };
+  const getConfidencePercent = (confidence) => {
+    const numeric = Number(confidence);
+    if (Number.isNaN(numeric)) return 0;
+    return Math.round(Math.min(1, Math.max(0, numeric)) * 100);
+  };
+  const getRsiPosition = (rsi) => {
+    const numeric = Number(rsi);
+    if (Number.isNaN(numeric)) return 50;
+    return Math.min(100, Math.max(0, numeric));
+  };
+  const getSignalExplanation = (item) => {
+    const rsi = formatRsi(item.rsi);
+    const signal = String(item.signal || "HOLD").toUpperCase();
+
+    if (signal === "BUY") {
+      return `RSI is ${rsi} (below 35 = oversold), and short-term trend is rising. May be a good entry point.`;
+    }
+
+    if (signal === "SELL") {
+      return `RSI is ${rsi} (above 65 = overbought), and short-term trend is falling. Consider reducing position.`;
+    }
+
+    return `No strong momentum signal right now. RSI is ${rsi} - stock is neutral. Waiting is prudent.`;
+  };
+  const getPortfolioSignalCounts = () => {
+    const total = signals.length;
+    const buy = signals.filter((item) => item.signal === "BUY").length;
+    const sell = signals.filter((item) => item.signal === "SELL").length;
+    const hold = signals.filter((item) => item.signal === "HOLD").length;
+    return { total, buy, sell, hold };
+  };
+  const getPortfolioRecommendation = () => {
+    const { total, buy, sell } = getPortfolioSignalCounts();
+    if (!total) return "Add stocks and optimize to see a clear recommendation.";
+    if (buy / total >= 0.5) return "At least half of your stocks look positive. This portfolio may be worth adding to carefully.";
+    if (sell / total >= 0.5) return "At least half of your stocks look weak. Consider reducing exposure or waiting.";
+    return "Most of your stocks look neutral. No strong reason to buy or sell right now.";
+  };
+  const openGuide = () => {
+    setGuideStep(0);
+    setShowGuide(true);
+  };
+  const closeGuide = () => {
+    localStorage.setItem("hasSeenGuide", "true");
+    setShowGuide(false);
+  };
+  const goToPreviousGuideStep = () => {
+    setGuideStep((current) => Math.max(0, current - 1));
+  };
+  const goToNextGuideStep = () => {
+    setGuideStep((current) => Math.min(GUIDE_STEPS.length - 1, current + 1));
+  };
+  const getOptimizationMethodLabel = () => {
+    const mode = summary.optimize_mode || safeMetrics.optimize_mode;
+    return summary.optimization_method || safeMetrics.optimization_method || OPTIMIZATION_METHOD_LABELS[mode] || "--";
+  };
+  const getMetricTone = (key, value) => {
+    const numeric = Number(value);
+    if (Number.isNaN(numeric)) return "neutral";
+
+    if (key === "expected_return" || key === "benchmark_return") {
+      if (numeric > 15) return "good";
+      if (numeric >= 5) return "moderate";
+      return "bad";
+    }
+
+    if (key === "volatility") {
+      if (numeric < 15) return "good";
+      if (numeric <= 25) return "moderate";
+      return "bad";
+    }
+
+    if (key === "sharpe") {
+      if (numeric > 1) return "good";
+      if (numeric >= 0.5) return "moderate";
+      return "bad";
+    }
+
+    if (key === "var_95" || key === "cvar_95") {
+      if (numeric < 2) return "good";
+      if (numeric <= 4) return "moderate";
+      return "bad";
+    }
+
+    if (key === "diversification_score") {
+      if (numeric > 60) return "good";
+      if (numeric >= 30) return "moderate";
+      return "bad";
+    }
+
+    if (key === "max_drawdown") {
+      if (numeric < 10) return "good";
+      if (numeric <= 20) return "moderate";
+      return "bad";
+    }
+
+    if (key === "portfolio_beta") {
+      if (numeric <= 1) return "good";
+      if (numeric <= 1.2) return "moderate";
+      return "bad";
+    }
+
+    if (key === "portfolio_value") {
+      const invested = Number(safeMetrics.investment_amount || investment);
+      if (Number.isNaN(invested) || invested <= 0) return "neutral";
+      if (numeric > invested) return "good";
+      if (numeric === invested) return "moderate";
+      return "bad";
+    }
+
+    return "neutral";
+  };
+  const metricCards = [
+    {
+      key: "portfolio_value",
+      value: formatCurrency(safeMetrics.portfolio_value),
+      rawValue: safeMetrics.portfolio_value
+    },
+    {
+      key: "expected_return",
+      value: `${safeMetrics.expected_return ?? safeMetrics.returns ?? "--"}%`,
+      rawValue: safeMetrics.expected_return ?? safeMetrics.returns
+    },
+    {
+      key: "sharpe",
+      value: safeMetrics.sharpe ?? "--",
+      rawValue: safeMetrics.sharpe
+    },
+    {
+      key: "volatility",
+      value: `${safeMetrics.volatility ?? "--"}%`,
+      rawValue: safeMetrics.volatility
+    },
+    {
+      key: "var_95",
+      value: `${safeMetrics.var_95 ?? "--"}%`,
+      rawValue: safeMetrics.var_95
+    },
+    {
+      key: "cvar_95",
+      value: `${safeMetrics.cvar_95 ?? "--"}%`,
+      rawValue: safeMetrics.cvar_95
+    },
+    {
+      key: "max_drawdown",
+      value: `${safeMetrics.max_drawdown ?? "--"}%`,
+      rawValue: safeMetrics.max_drawdown
+    },
+    {
+      key: "portfolio_beta",
+      value: safeMetrics.portfolio_beta ?? "--",
+      rawValue: safeMetrics.portfolio_beta
+    },
+    {
+      key: "diversification_score",
+      value: `${safeMetrics.diversification_score ?? "--"}%`,
+      rawValue: safeMetrics.diversification_score
+    },
+    {
+      key: "benchmark_return",
+      value: `${safeMetrics.benchmark_return ?? "--"}%`,
+      rawValue: safeMetrics.benchmark_return
+    }
+  ];
   const getEnsembleStatusClass = (status) => {
     const normalized = String(status || "").toLowerCase();
     if (normalized.includes("connected")) return "connected";
@@ -255,14 +463,83 @@ function Dashboard({ onLogout }) {
     if (normalized.includes("error")) return "error";
     return "ready";
   };
-  const portfolioSignalExplanation = signalDescriptions[portfolioSignal] || signalDescriptions.HOLD;
+  const getReturnSignalLevel = () => {
+    const score = Number(ensemblePrediction);
+    if (Number.isNaN(score)) return "pending";
+    if (score > 0.05) return "high";
+    if (score >= -0.05) return "medium";
+    return "low";
+  };
+  const getPredictionLabel = () => {
+    const level = getReturnSignalLevel();
+    if (level === "pending") return "calculating";
+    return level;
+  };
+  const formatFeatureValue = (key, value) => {
+    const numeric = Number(value);
+    if (Number.isNaN(numeric)) return "--";
+    if (["recent_return", "volatility", "momentum", "sector_exposure"].includes(key)) {
+      return `${(numeric * 100).toFixed(2)}%`;
+    }
+    return numeric.toFixed(4);
+  };
+  const getTopExplanationFeature = () => {
+    if (!ensembleExplanations.length) return null;
+    return ensembleExplanations.reduce((top, item) => (
+      Math.abs(Number(item.contribution || 0)) > Math.abs(Number(top.contribution || 0)) ? item : top
+    ), ensembleExplanations[0]);
+  };
+  const getContributionWidth = (contribution) => {
+    const values = ensembleExplanations.map((item) => Math.abs(Number(item.contribution || 0)));
+    const maxValue = Math.max(...values, 0.000001);
+    return Math.min(100, (Math.abs(Number(contribution || 0)) / maxValue) * 100);
+  };
+  const formatContribution = (value) => {
+    const numeric = Number(value || 0);
+    return `${numeric >= 0 ? "+" : ""}${numeric.toFixed(4)}`;
+  };
+  const topExplanationFeature = getTopExplanationFeature();
+  const portfolioCounts = getPortfolioSignalCounts();
+  const activeGuideStep = GUIDE_STEPS[guideStep];
 
   return (
     <div className="dashboard-page">
       <header className="dashboard-header">
         <h2>Quant Portfolio Control Center</h2>
-        <button className="logout-btn" onClick={onLogout}>Logout</button>
+        <div className="header-actions">
+          <button className="guide-help-btn" onClick={openGuide} aria-label="Open first-time user guide">?</button>
+          <button className="logout-btn" onClick={onLogout}>Logout</button>
+        </div>
       </header>
+
+      {showGuide && (
+        <div className="guide-overlay" role="dialog" aria-modal="true" aria-labelledby="guide-title">
+          <div className="guide-card">
+            <div className="guide-step-count">Step {guideStep + 1} of {GUIDE_STEPS.length}</div>
+            <h3 id="guide-title">{activeGuideStep.title}</h3>
+            <p>{activeGuideStep.body}</p>
+            <div className="guide-dots" aria-hidden="true">
+              {GUIDE_STEPS.map((step, index) => (
+                <span key={step.title} className={index === guideStep ? "active" : ""} />
+              ))}
+            </div>
+            <div className="guide-actions">
+              <button type="button" onClick={goToPreviousGuideStep} disabled={guideStep === 0}>
+                Previous
+              </button>
+              {guideStep < GUIDE_STEPS.length - 1 ? (
+                <button type="button" className="guide-primary-btn" onClick={goToNextGuideStep}>
+                  Next
+                </button>
+              ) : (
+                <button type="button" className="guide-primary-btn" onClick={closeGuide}>
+                  Got it
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <section className="panel">
         <div className="section-title">Portfolio Setup</div>
@@ -307,32 +584,29 @@ function Dashboard({ onLogout }) {
         <section className="ensemble-panel">
           <div className="ensemble-header">
             <div>
-              <div className="section-title">Ensemble Explainability</div>
-              <p className="ensemble-note">Provide feature values and run explainability to see feature contributions.</p>
+              <div className="section-title">AI Signal Explainer — What's driving the prediction?</div>
+              <p className="ensemble-note">Select a stock and the backend calculates live market features automatically.</p>
             </div>
           </div>
-          <div className="feature-row">
-            {ensembleFeatureMetadata.map(({ key, label, description }) => (
-              <div key={key} className="feature-box">
-                <label>{label}</label>
-                <input
-                  type="number"
-                  value={ensembleFeatures[key] ?? 0}
-                  step="0.01"
-                  onChange={(e) => updateEnsembleFeature(key, e.target.value)}
-                  aria-label={label}
-                />
+          <div className={`ensemble-preview preview-${getReturnSignalLevel()}`}>
+            {selectedAiStock
+              ? <>Based on live data for <strong>{analyzedStock || selectedAiStock}</strong>, the AI sees a <strong>{getPredictionLabel()}</strong> return signal.</>
+              : "Select a stock to calculate the AI signal from live market data."}
+          </div>
+          {ensembleLoading && <div className="ai-loading">Fetching market data and calculating features...</div>}
+          <div className="feature-row dynamic-feature-grid">
+            {ensembleFeatureCards.map(({ key, label, value, description, support }) => (
+              <div key={key} className={`feature-box dynamic-feature-card support-${String(support || "HOLD").toLowerCase()}`}>
+                <div className="slider-label-row">
+                  <label>{label}</label>
+                  <strong>{formatFeatureValue(key, value)}</strong>
+                </div>
                 <small>{description}</small>
+                <span className={getSignalClass(support)}>Supports {support}</span>
               </div>
             ))}
           </div>
-          <div className="prediction-actions">
-            <button className="predict-btn" onClick={runEnsemblePrediction} disabled={ensembleLoading}>
-              {ensembleLoading ? "Predicting..." : "Predict"}
-            </button>
-            <button className="sample-btn" onClick={fillSampleFeatures} type="button">
-              Sample values
-            </button>
+          <div className="prediction-actions ai-status-row">
             <span className={`model-badge status-${getEnsembleStatusClass(ensembleStatus)}`}>
               {ensembleStatus}
             </span>
@@ -343,22 +617,36 @@ function Dashboard({ onLogout }) {
                 <span>Prediction</span>
                 <strong>{Number(ensemblePrediction).toFixed(6)}</strong>
               </div>
-              <div className="explanation-list">
-                {ensembleExplanations.map(({ key, label, contribution }) => (
-                  <div className="explain-row" key={key}>
-                    <span>{label}</span>
-                    <strong className={Number(contribution) >= 0 ? 'pos' : 'neg'}>{Number(contribution).toFixed(6)}</strong>
-                  </div>
-                ))}
-              </div>
-              {ensembleBasePredictions && (
-                <div className="base-preds">
-                  <small>Base model outputs</small>
-                  <div className="base-row">Ridge: {ensembleBasePredictions.ridge && ensembleBasePredictions.ridge[0] ? Number(ensembleBasePredictions.ridge[0]).toFixed(6) : "--"}</div>
-                  <div className="base-row">RandomForest: {ensembleBasePredictions.random_forest && ensembleBasePredictions.random_forest[0] ? Number(ensembleBasePredictions.random_forest[0]).toFixed(6) : "--"}</div>
-                  <div className="base-row">HGB: {ensembleBasePredictions.hist_gradient_boosting && ensembleBasePredictions.hist_gradient_boosting[0] ? Number(ensembleBasePredictions.hist_gradient_boosting[0]).toFixed(6) : "--"}</div>
-                </div>
+              {topExplanationFeature && (
+                <p className="prediction-summary">
+                  The main reason for this prediction is {topExplanationFeature.label}.
+                </p>
               )}
+              <div className="contribution-chart">
+                {ensembleExplanations.map(({ key, label, contribution }) => {
+                  const numericContribution = Number(contribution || 0);
+                  const direction = numericContribution >= 0 ? "BUY" : "SELL";
+                  const width = getContributionWidth(numericContribution);
+
+                  return (
+                    <div className="contribution-row" key={key}>
+                      <div className="contribution-label">
+                        {label} contributed {formatContribution(numericContribution)} toward {direction}
+                      </div>
+                      <div className="contribution-track">
+                        <span className="contribution-center" />
+                        <span
+                          className={`contribution-bar ${numericContribution >= 0 ? "buy" : "sell"}`}
+                          style={{
+                            width: `${width / 2}%`,
+                            left: numericContribution >= 0 ? "50%" : `${50 - width / 2}%`
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
           {ensembleError && <div className="error-text">{ensembleError}</div>}
@@ -375,16 +663,12 @@ function Dashboard({ onLogout }) {
           <section className="panel">
             <div className="section-title">Portfolio Metrics</div>
             <div className="metrics">
-              <div className="metric-card"><p>Portfolio Value</p><h3>{formatCurrency(safeMetrics.portfolio_value)}</h3></div>
-              <div className="metric-card"><p>Estimated yearly return</p><h3>{safeMetrics.expected_return ?? safeMetrics.returns ?? "--"}%</h3></div>
-              <div className="metric-card"><p>Risk vs Return Score <TooltipIcon text={metricDescriptions.sharpe} /></p><h3>{safeMetrics.sharpe ?? "--"}</h3></div>
-              <div className="metric-card"><p>Expected fluctuation <TooltipIcon text={metricDescriptions.volatility} /></p><h3>{safeMetrics.volatility ?? "--"}%</h3></div>
-              <div className="metric-card"><p>Possible daily loss (95%) <TooltipIcon text={metricDescriptions.var_95} /></p><h3>{safeMetrics.var_95 ?? "--"}%</h3></div>
-              <div className="metric-card"><p>Loss during worst market days (95%) <TooltipIcon text={metricDescriptions.cvar_95} /></p><h3>{safeMetrics.cvar_95 ?? "--"}%</h3></div>
-              <div className="metric-card"><p>Biggest drop seen <TooltipIcon text={metricDescriptions.max_drawdown} /></p><h3>{safeMetrics.max_drawdown ?? "--"}%</h3></div>
-              <div className="metric-card"><p>Market movement sensitivity <TooltipIcon text={metricDescriptions.portfolio_beta} /></p><h3>{safeMetrics.portfolio_beta ?? "--"}</h3></div>
-              <div className="metric-card"><p>Diversification score <TooltipIcon text={metricDescriptions.diversification_score} /></p><h3>{safeMetrics.diversification_score ?? "--"}%</h3></div>
-              <div className="metric-card"><p>NIFTY Return</p><h3>{safeMetrics.benchmark_return ?? "--"}%</h3></div>
+              {metricCards.map(({ key, value, rawValue }) => (
+                <div className={`metric-card metric-${getMetricTone(key, rawValue)}`} key={key}>
+                  <p>{metricCopy[key].label} <TooltipIcon text={metricCopy[key].tooltip} /></p>
+                  <h3>{value}</h3>
+                </div>
+              ))}
             </div>
           </section>
 
@@ -395,7 +679,8 @@ function Dashboard({ onLogout }) {
               <div><span>Stocks Selected</span><strong>{summary.stocks_selected ?? stocks.length}</strong></div>
               <div><span>Sectors Covered</span><strong>{summary.sectors_covered ?? "--"}</strong></div>
               <div><span>Risk Level</span><strong>{String(summary.risk_level || risk).toUpperCase()}</strong></div>
-              <div><span>Portfolio Signal</span><strong className={getSignalClass(summary.portfolio_signal || portfolioSignal)}>{summary.portfolio_signal || portfolioSignal}</strong></div>
+              <div><span>Optimization method</span><strong>{getOptimizationMethodLabel()}</strong></div>
+              <div><span>What to do now: BUY / HOLD / SELL</span><strong className={getSignalClass(summary.portfolio_signal || portfolioSignal)}>{summary.portfolio_signal || portfolioSignal}</strong></div>
               <div><span>Estimated yearly return</span><strong>{summary.expected_return ?? safeMetrics.expected_return ?? safeMetrics.returns ?? "--"}%</strong></div>
             </div>
           </section>
@@ -403,18 +688,40 @@ function Dashboard({ onLogout }) {
           <section className="panel">
             <div className="section-title">Signals</div>
             <div className="recommendation-card">
-              <p>Portfolio Signal: <strong className={getSignalClass(portfolioSignal)}>{SIGNAL_LABELS[portfolioSignal] || "HOLD"}</strong></p>
-              <p>Explanation: {portfolioSignalReason || portfolioSignalExplanation}</p>
+              <p>What to do now: <strong className={getSignalClass(portfolioSignal)}>{SIGNAL_LABELS[portfolioSignal] || "HOLD"}</strong></p>
+              <p>{portfolioCounts.buy} out of {portfolioCounts.total} stocks show BUY signals. {portfolioCounts.sell} show SELL signals and {portfolioCounts.hold} are neutral.</p>
+              <p>{getPortfolioRecommendation()}</p>
             </div>
             <div className="signal-grid">
-              {signals.map((item) => (
-                <div className="signal-card" key={item.stock}>
-                  <p>{item.stock} <em className="sector-tag">{item.sector}</em></p>
-                  <div className={getSignalClass(item.signal)}>{SIGNAL_LABELS[item.signal]}</div>
-                  <p>{signalDescriptions[item.signal] || signalDescriptions.HOLD}</p>
-                  <span>Confidence: {Math.round((item.confidence || 0) * 100)}%</span>
-                </div>
-              ))}
+              {signals.map((item) => {
+                const confidencePercent = getConfidencePercent(item.confidence);
+                const rsiPosition = getRsiPosition(item.rsi);
+
+                return (
+                  <div className="signal-card" key={item.stock}>
+                    <div className="signal-card-header">
+                      <p>{item.stock} <em className="sector-tag">{item.sector}</em></p>
+                      <div className={getSignalClass(item.signal)}>{SIGNAL_LABELS[item.signal]}</div>
+                    </div>
+                    <p className="signal-explanation">{getSignalExplanation(item)}</p>
+                    <div className="confidence-wrap">
+                      <span>Signal confidence: {confidencePercent}%</span>
+                      <div className="confidence-track">
+                        <div className="confidence-fill" style={{ width: `${confidencePercent}%` }} />
+                      </div>
+                    </div>
+                    <div className="rsi-gauge-wrap">
+                      <span>RSI: {formatRsi(item.rsi)}</span>
+                      <div className="rsi-gauge" style={{ "--rsi-position": `${rsiPosition}%` }}>
+                        <span className="rsi-zone rsi-zone-low" />
+                        <span className="rsi-zone rsi-zone-mid" />
+                        <span className="rsi-zone rsi-zone-high" />
+                        <span className="rsi-dot" />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </section>
 
@@ -513,6 +820,7 @@ function Dashboard({ onLogout }) {
                     <th>RSI</th>
                     <th>SMA20</th>
                     <th>SMA50</th>
+                    <th>10D Momentum</th>
                     <th>Signal</th>
                   </tr>
                 </thead>
@@ -524,6 +832,7 @@ function Dashboard({ onLogout }) {
                       <td>{item.rsi ?? "--"}</td>
                       <td>{item.sma20 ?? "--"}</td>
                       <td>{item.sma50 ?? "--"}</td>
+                      <td>{item.momentum_10d !== null && item.momentum_10d !== undefined ? `${(Number(item.momentum_10d) * 100).toFixed(2)}%` : "--"}</td>
                       <td><span className={getSignalClass(item.signal)}>{SIGNAL_LABELS[item.signal]}</span></td>
                     </tr>
                   ))}

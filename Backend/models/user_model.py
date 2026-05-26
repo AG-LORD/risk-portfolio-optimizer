@@ -14,6 +14,9 @@ class User(db.Model):
 
     password_hash = db.Column(db.String(200), nullable=False)
 
+    # KYC status: "pending" | "submitted" | "approved"
+    kyc_status = db.Column(db.String(20), nullable=False, default="pending")
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 

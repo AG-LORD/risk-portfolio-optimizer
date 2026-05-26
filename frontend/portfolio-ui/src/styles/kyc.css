@@ -1,0 +1,409 @@
+/* ===== KYC PAGE ===== */
+.kyc-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0f172a;
+  padding: 2rem 1rem;
+}
+
+.kyc-card {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 16px;
+  padding: 2.5rem 2rem;
+  width: 100%;
+  max-width: 560px;
+}
+
+.kyc-header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.kyc-header h2 {
+  color: #f1f5f9;
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.kyc-header p {
+  color: #94a3b8;
+  font-size: 0.875rem;
+}
+
+/* ─── Step Indicator ─── */
+.kyc-steps {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 2rem;
+  position: relative;
+}
+
+.kyc-steps::before {
+  content: "";
+  position: absolute;
+  top: 16px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #334155;
+  z-index: 0;
+}
+
+.kyc-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  z-index: 1;
+  flex: 1;
+}
+
+.kyc-step-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #334155;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  border: 2px solid #334155;
+  transition: all 0.2s;
+}
+
+.kyc-step.active .kyc-step-circle {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: white;
+}
+
+.kyc-step.done .kyc-step-circle {
+  background: #22c55e;
+  border-color: #22c55e;
+  color: white;
+}
+
+.kyc-step span {
+  font-size: 0.7rem;
+  color: #64748b;
+  text-align: center;
+}
+
+.kyc-step.active span {
+  color: #93c5fd;
+}
+
+.kyc-step.done span {
+  color: #86efac;
+}
+
+/* ─── Section ─── */
+.kyc-section h3 {
+  color: #f1f5f9;
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.kyc-section-hint {
+  color: #94a3b8;
+  font-size: 0.8rem;
+  margin-bottom: 1.25rem;
+}
+
+.kyc-section label {
+  display: block;
+  color: #cbd5e1;
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin-bottom: 0.4rem;
+  margin-top: 1rem;
+}
+
+.kyc-input {
+  width: 100%;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 0.65rem 1rem;
+  color: #f1f5f9;
+  font-size: 0.95rem;
+  letter-spacing: 0.05em;
+  box-sizing: border-box;
+  transition: border-color 0.2s;
+}
+
+.kyc-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+/* ─── Upload Box ─── */
+.kyc-upload-box {
+  border: 2px dashed #334155;
+  border-radius: 10px;
+  padding: 1.5rem;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  background: #0f172a;
+}
+
+.kyc-upload-box:hover {
+  border-color: #3b82f6;
+  background: #1e2d44;
+}
+
+.kyc-upload-icon {
+  font-size: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.kyc-upload-label {
+  color: #93c5fd;
+  font-weight: 500;
+  margin-bottom: 0.25rem;
+}
+
+.kyc-upload-hint {
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
+.kyc-file-chosen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.kyc-file-icon { font-size: 1.2rem; }
+
+.kyc-file-name {
+  color: #22c55e;
+  font-size: 0.85rem;
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.kyc-file-size {
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
+/* ─── Error ─── */
+.kyc-error {
+  color: #f87171;
+  font-size: 0.8rem;
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(248, 113, 113, 0.1);
+  border-radius: 6px;
+  border-left: 3px solid #f87171;
+}
+
+/* ─── Selfie Tips ─── */
+.kyc-selfie-tips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.kyc-selfie-tips span {
+  font-size: 0.78rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 20px;
+  background: #0f172a;
+  border: 1px solid #334155;
+  color: #94a3b8;
+}
+
+.kyc-selfie-tips span:nth-child(1),
+.kyc-selfie-tips span:nth-child(2) {
+  color: #86efac;
+  border-color: #22c55e30;
+}
+
+.kyc-selfie-tips span:nth-child(3),
+.kyc-selfie-tips span:nth-child(4) {
+  color: #fca5a5;
+  border-color: #ef444430;
+}
+
+/* ─── Review ─── */
+.kyc-review-grid {
+  background: #0f172a;
+  border-radius: 10px;
+  border: 1px solid #334155;
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+
+.kyc-review-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #1e293b;
+  gap: 1rem;
+}
+
+.kyc-review-row:last-child {
+  border-bottom: none;
+}
+
+.kyc-review-row span {
+  color: #64748b;
+  font-size: 0.82rem;
+  flex-shrink: 0;
+}
+
+.kyc-review-row strong {
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  text-align: right;
+  word-break: break-all;
+}
+
+.kyc-file-pill {
+  color: #93c5fd !important;
+  font-size: 0.78rem !important;
+}
+
+.kyc-disclaimer {
+  color: #64748b;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  padding: 0.75rem;
+  background: #0f172a;
+  border-radius: 8px;
+  border: 1px solid #1e293b;
+}
+
+/* ─── Navigation ─── */
+.kyc-nav {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.75rem;
+}
+
+.kyc-btn-primary {
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 0.65rem 1.5rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: background 0.2s;
+}
+
+.kyc-btn-primary:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+.kyc-btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.kyc-btn-secondary {
+  background: transparent;
+  color: #94a3b8;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 0.65rem 1.25rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.kyc-btn-secondary:hover:not(:disabled) {
+  color: #f1f5f9;
+  border-color: #64748b;
+}
+
+/* ─── Spinner ─── */
+.kyc-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  display: inline-block;
+  animation: kyc-spin 0.7s linear infinite;
+}
+
+@keyframes kyc-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ─── Success ─── */
+.kyc-success {
+  text-align: center;
+  padding: 1.5rem 0;
+}
+
+.kyc-success-icon {
+  width: 64px;
+  height: 64px;
+  background: #22c55e;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.75rem;
+  color: white;
+  margin: 0 auto 1.25rem;
+  animation: kyc-pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes kyc-pop {
+  from { transform: scale(0); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.kyc-success h3 {
+  color: #f1f5f9;
+  font-size: 1.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.kyc-success p {
+  color: #94a3b8;
+  font-size: 0.9rem;
+  margin-bottom: 1.75rem;
+  line-height: 1.6;
+}
+
+/* ─── Prediction label colors ─── */
+.prediction-label {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.prediction-score {
+  color: #64748b;
+  font-size: 0.75rem;
+  display: block;
+  margin-top: 2px;
+}
+
+.prediction-strong-positive { color: #22c55e; }
+.prediction-moderate-positive { color: #86efac; }
+.prediction-neutral-outlook { color: #94a3b8; }
+.prediction-cautious { color: #fbbf24; }
+.prediction-negative { color: #f87171; }

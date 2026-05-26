@@ -40,10 +40,15 @@ function LoginPage({ onLogin }) {
 
       if (!isSignup) {
         localStorage.setItem("token", data.token);
-        onLogin();
+        localStorage.setItem("kyc_status", data.user?.kyc_status || "pending");
+        onLogin(data.user?.kyc_status || "pending");
       } else {
-        alert("Account created! Please login.");
+        // Account created — switch to login form automatically
+        alert("Account created successfully! Please sign in to continue.");
         setIsSignup(false);
+        setName("");
+        setEmail("");
+        setPassword("");
       }
 
     } catch (err) {

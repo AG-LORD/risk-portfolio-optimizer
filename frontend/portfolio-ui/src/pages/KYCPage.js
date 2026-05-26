@@ -7,7 +7,10 @@ function StepIndicator({ current }) {
   return (
     <div className="kyc-steps">
       {STEPS.map((label, i) => (
-        <div key={label} className={`kyc-step ${i < current ? "done" : i === current ? "active" : ""}`}>
+        <div
+          key={label}
+          className={`kyc-step ${i < current ? "done" : i === current ? "active" : ""}`}
+        >
           <div className="kyc-step-circle">{i < current ? "✓" : i + 1}</div>
           <span>{label}</span>
         </div>
@@ -45,60 +48,42 @@ function FileUploadBox({ label, hint, value, onChange, accept }) {
 }
 
 export default function KYCPage({ onKYCComplete }) {
-  const [step, setStep] = useState(0);
+  const [step,       setStep]       = useState(0);
   const [submitting, setSubmitting] = useState(false);
 
   // Step 0 — PAN
   const [panNumber, setPanNumber] = useState("");
-  const [panFile, setPanFile] = useState(null);
-  const [panError, setPanError] = useState("");
+  const [panFile,   setPanFile]   = useState(null);
+  const [panError,  setPanError]  = useState("");
 
   // Step 1 — Aadhaar
   const [aadhaarNumber, setAadhaarNumber] = useState("");
-  const [aadhaarFront, setAadhaarFront] = useState(null);
-  const [aadhaarBack, setAadhaarBack] = useState(null);
-  const [aadhaarError, setAadhaarError] = useState("");
+  const [aadhaarFront,  setAadhaarFront]  = useState(null);
+  const [aadhaarBack,   setAadhaarBack]   = useState(null);
+  const [aadhaarError,  setAadhaarError]  = useState("");
 
   // Step 2 — Selfie
-  const [selfieFile, setSelfieFile] = useState(null);
+  const [selfieFile,  setSelfieFile]  = useState(null);
   const [selfieError, setSelfieError] = useState("");
 
-  const validatePAN = (value) => /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(value.trim().toUpperCase());
-  const validateAadhaar = (value) => /^\d{12}$/.test(value.replace(/\s/g, ""));
+  const validatePAN    = (v) => /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(v.trim().toUpperCase());
+  const validateAadhaar = (v) => /^\d{12}$/.test(v.replace(/\s/g, ""));
 
   const goNext = () => {
     if (step === 0) {
-      if (!validatePAN(panNumber)) {
-        setPanError("Enter a valid PAN number (e.g. ABCDE1234F)");
-        return;
-      }
-      if (!panFile) {
-        setPanError("Please upload your PAN card image or PDF");
-        return;
-      }
+      if (!validatePAN(panNumber)) { setPanError("Enter a valid PAN number (e.g. ABCDE1234F)"); return; }
+      if (!panFile)                { setPanError("Please upload your PAN card image or PDF");   return; }
       setPanError("");
     }
-
     if (step === 1) {
-      if (!validateAadhaar(aadhaarNumber)) {
-        setAadhaarError("Enter a valid 12-digit Aadhaar number");
-        return;
-      }
-      if (!aadhaarFront || !aadhaarBack) {
-        setAadhaarError("Please upload both front and back of your Aadhaar card");
-        return;
-      }
+      if (!validateAadhaar(aadhaarNumber))  { setAadhaarError("Enter a valid 12-digit Aadhaar number");                       return; }
+      if (!aadhaarFront || !aadhaarBack)    { setAadhaarError("Please upload both front and back of your Aadhaar card");     return; }
       setAadhaarError("");
     }
-
     if (step === 2) {
-      if (!selfieFile) {
-        setSelfieError("Please upload a selfie for face match");
-        return;
-      }
+      if (!selfieFile) { setSelfieError("Please upload a selfie for face match"); return; }
       setSelfieError("");
     }
-
     setStep((s) => s + 1);
   };
 
@@ -107,23 +92,35 @@ export default function KYCPage({ onKYCComplete }) {
   const handleSubmit = async () => {
     setSubmitting(true);
     try {
+      // The token was stored in localStorage right after /signup.
+      // Sending it here proves a registered user exists — this is what
+      // was missing before and caused "User not found".
       const token = localStorage.getItem("token");
+
+      if (!token) {
+        alert("Session expired or not logged in. Please register again.");
+        setSubmitting(false);
+        return;
+      }
+
       const res = await fetch("http://127.0.0.1:5000/kyc/submit", {
-        method: "POST",
+        method:  "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        }
+          "Authorization": `Bearer ${token}`,
+        },
       });
+
       const data = await res.json();
+
       if (!res.ok) {
         alert(data.error || "KYC submission failed. Please try again.");
         setSubmitting(false);
         return;
       }
-      // Save to localStorage so App.js knows immediately
+
       localStorage.setItem("kyc_status", "approved");
-      setStep(4); // Done
+      setStep(4); // Done screen
     } catch (err) {
       alert("Server error. Make sure the backend is running.");
     } finally {
@@ -134,6 +131,7 @@ export default function KYCPage({ onKYCComplete }) {
   return (
     <div className="kyc-page">
       <div className="kyc-card">
+
         <div className="kyc-header">
           <h2>Identity Verification (KYC)</h2>
           <p>Complete this once to unlock your portfolio dashboard. Your data is kept secure and never shared.</p>
@@ -184,19 +182,9 @@ export default function KYCPage({ onKYCComplete }) {
               }}
             />
             <label>Aadhaar Front</label>
-            <FileUploadBox
-              label="Upload front side"
-              hint="Shows your name, DOB, photo"
-              value={aadhaarFront}
-              onChange={setAadhaarFront}
-            />
+            <FileUploadBox label="Upload front side" hint="Shows your name, DOB, photo" value={aadhaarFront} onChange={setAadhaarFront} />
             <label>Aadhaar Back</label>
-            <FileUploadBox
-              label="Upload back side"
-              hint="Shows your address"
-              value={aadhaarBack}
-              onChange={setAadhaarBack}
-            />
+            <FileUploadBox label="Upload back side"  hint="Shows your address"           value={aadhaarBack}  onChange={setAadhaarBack}  />
             {aadhaarError && <p className="kyc-error">{aadhaarError}</p>}
           </div>
         )}
@@ -229,30 +217,12 @@ export default function KYCPage({ onKYCComplete }) {
             <h3>Review Your Submission</h3>
             <p className="kyc-section-hint">Please confirm your details before submitting. This cannot be undone.</p>
             <div className="kyc-review-grid">
-              <div className="kyc-review-row">
-                <span>PAN Number</span>
-                <strong>{panNumber}</strong>
-              </div>
-              <div className="kyc-review-row">
-                <span>PAN Document</span>
-                <strong className="kyc-file-pill">📎 {panFile?.name}</strong>
-              </div>
-              <div className="kyc-review-row">
-                <span>Aadhaar Number</span>
-                <strong>{aadhaarNumber}</strong>
-              </div>
-              <div className="kyc-review-row">
-                <span>Aadhaar Front</span>
-                <strong className="kyc-file-pill">📎 {aadhaarFront?.name}</strong>
-              </div>
-              <div className="kyc-review-row">
-                <span>Aadhaar Back</span>
-                <strong className="kyc-file-pill">📎 {aadhaarBack?.name}</strong>
-              </div>
-              <div className="kyc-review-row">
-                <span>Selfie</span>
-                <strong className="kyc-file-pill">📎 {selfieFile?.name}</strong>
-              </div>
+              <div className="kyc-review-row"><span>PAN Number</span>   <strong>{panNumber}</strong></div>
+              <div className="kyc-review-row"><span>PAN Document</span> <strong className="kyc-file-pill">📎 {panFile?.name}</strong></div>
+              <div className="kyc-review-row"><span>Aadhaar Number</span> <strong>{aadhaarNumber}</strong></div>
+              <div className="kyc-review-row"><span>Aadhaar Front</span>  <strong className="kyc-file-pill">📎 {aadhaarFront?.name}</strong></div>
+              <div className="kyc-review-row"><span>Aadhaar Back</span>   <strong className="kyc-file-pill">📎 {aadhaarBack?.name}</strong></div>
+              <div className="kyc-review-row"><span>Selfie</span>         <strong className="kyc-file-pill">📎 {selfieFile?.name}</strong></div>
             </div>
             <p className="kyc-disclaimer">
               By submitting, you confirm that all details are accurate and belong to you. This is a mock KYC simulation — no data is transmitted or stored externally.
@@ -287,14 +257,13 @@ export default function KYCPage({ onKYCComplete }) {
             )}
             {step === 3 && (
               <button className="kyc-btn-primary" onClick={handleSubmit} disabled={submitting}>
-                {submitting ? (
-                  <span className="kyc-spinner" />
-                ) : null}
-                {submitting ? "Verifying..." : "Submit KYC"}
+                {submitting && <span className="kyc-spinner" />}
+                {submitting ? "Verifying…" : "Submit KYC"}
               </button>
             )}
           </div>
         )}
+
       </div>
     </div>
   );

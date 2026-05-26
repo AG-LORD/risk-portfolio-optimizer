@@ -4,37 +4,51 @@ import KYCPage from "./pages/KYCPage";
 import LoginPage from "./pages/LoginPage";
 
 function App() {
-  const [loggedIn, setLoggedIn] = useState(!!localStorage.getItem("token"));
-
-  // KYC is done only if server previously confirmed kyc_status === "approved"
-  const [kycDone, setKycDone] = useState(
-    localStorage.getItem("kyc_status") === "approved"
-  );
-
-  // Called by LoginPage with the kyc_status from the server response
-  const handleLogin = (kycStatus) => {
-    setLoggedIn(true);
-    setKycDone(kycStatus === "approved");
+  // Three possible views: "login" | "kyc" | "dashboard"
+  const deriveView = () => {
+    const token     = localStorage.getItem("token");
+    const kycStatus = localStorage.getItem("kyc_status");
+    if (!token) return "login";
+    if (kycStatus !== "approved") return "kyc";
+    return "dashboard";
   };
 
+  const [view, setView] = useState(deriveView);
+
+  // Called by LoginPage after a successful /signup response.
+  // The server returns a token + kyc_status:"pending" so we go straight to KYC.
+  const handleSignup = (token, kycStatus) => {
+    localStorage.setItem("token", token);
+    localStorage.setItem("kyc_status", kycStatus || "pending");
+    setView(kycStatus === "approved" ? "dashboard" : "kyc");
+  };
+
+  // Called by LoginPage after a successful /login response.
+  // Login only succeeds when kyc_status is "approved" (backend enforces this),
+  // but we still read the value from the server to be safe.
+  const handleLogin = (kycStatus) => {
+    localStorage.setItem("kyc_status", kycStatus || "approved");
+    setView("dashboard");
+  };
+
+  // Called by KYCPage once the /kyc/submit call succeeds.
   const handleKYCComplete = () => {
     localStorage.setItem("kyc_status", "approved");
-    setKycDone(true);
+    setView("dashboard");
   };
 
   const handleLogout = () => {
     localStorage.removeItem("token");
-    localStorage.removeItem("hasSeenGuide"); // reset guide so it shows fresh next login
-    // Don't remove kyc_status — login response from DB will always have the correct value
-    setLoggedIn(false);
-    setKycDone(false);
+    localStorage.removeItem("kyc_status");
+    localStorage.removeItem("hasSeenGuide");
+    setView("login");
   };
 
-  if (!loggedIn) {
-    return <LoginPage onLogin={handleLogin} />;
+  if (view === "login") {
+    return <LoginPage onLogin={handleLogin} onSignup={handleSignup} />;
   }
 
-  if (!kycDone) {
+  if (view === "kyc") {
     return <KYCPage onKYCComplete={handleKYCComplete} />;
   }
 

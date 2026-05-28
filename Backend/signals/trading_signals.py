@@ -159,8 +159,8 @@ def generate_portfolio_signal(signals):
     buy_count = sum(1 for item in signals if item.get("signal") == "BUY")
     sell_count = sum(1 for item in signals if item.get("signal") == "SELL")
 
-    if buy_count / total >= 0.5:
+    if buy_count / total >= 0.4:
         return "BUY"
-    if sell_count / total >= 0.5:
+    if sell_count / total >= 0.4:
         return "SELL"
     return "HOLD"

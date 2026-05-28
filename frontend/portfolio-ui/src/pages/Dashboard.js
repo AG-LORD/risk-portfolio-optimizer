@@ -303,18 +303,42 @@ function Dashboard({ onLogout }) {
     return Math.min(100, Math.max(0, numeric));
   };
   const getSignalExplanation = (item) => {
-    const rsi = formatRsi(item.rsi);
+    const rsi = Number(item.rsi);
+    const rsiStr = formatRsi(item.rsi);
     const signal = String(item.signal || "HOLD").toUpperCase();
+    const sma20 = Number(item.sma20);
+    const sma50 = Number(item.sma50);
+    const trendRising = !Number.isNaN(sma20) && !Number.isNaN(sma50) && sma20 > sma50;
+    const trendFalling = !Number.isNaN(sma20) && !Number.isNaN(sma50) && sma20 < sma50;
 
     if (signal === "BUY") {
-      return `RSI is ${rsi} (below 35 = oversold), and short-term trend is rising. May be a good entry point.`;
+      if (!Number.isNaN(rsi) && rsi < 35) {
+        return `RSI is ${rsiStr} — the stock is near oversold territory, which can signal a potential buying opportunity. Short-term trend is also rising.`;
+      }
+      if (trendRising) {
+        return `Short-term trend is rising (SMA20 > SMA50), which is a positive sign. RSI is ${rsiStr} — momentum is moderate but direction looks good.`;
+      }
+      return `Multiple indicators point positive. RSI is ${rsiStr}. Consider this a cautious entry opportunity.`;
     }
 
     if (signal === "SELL") {
-      return `RSI is ${rsi} (above 65 = overbought), and short-term trend is falling. Consider reducing position.`;
+      if (!Number.isNaN(rsi) && rsi > 65) {
+        return `RSI is ${rsiStr} — the stock is near overbought territory. Short-term trend is also falling. Consider reducing your position.`;
+      }
+      if (trendFalling) {
+        return `Short-term trend is falling (SMA20 < SMA50). RSI is ${rsiStr}. Momentum is weakening — watch for further decline.`;
+      }
+      return `Multiple indicators point negative. RSI is ${rsiStr}. Reducing exposure may be prudent.`;
     }
 
-    return `No strong momentum signal right now. RSI is ${rsi} - stock is neutral. Waiting is prudent.`;
+    // HOLD — add nuance based on RSI position
+    if (!Number.isNaN(rsi) && rsi < 40) {
+      return `RSI is ${rsiStr} — approaching oversold territory, but the short-term trend hasn't confirmed a reversal yet. Worth watching closely.`;
+    }
+    if (!Number.isNaN(rsi) && rsi > 60) {
+      return `RSI is ${rsiStr} — approaching overbought territory. Momentum is fading. Monitor for a potential SELL trigger.`;
+    }
+    return `No strong momentum signal right now. RSI is ${rsiStr} — the stock is in neutral territory. Waiting is prudent.`;
   };
   const getPortfolioSignalCounts = () => {
     const total = signals.length;
@@ -326,8 +350,28 @@ function Dashboard({ onLogout }) {
   const getPortfolioRecommendation = () => {
     const { total, buy, sell } = getPortfolioSignalCounts();
     if (!total) return "Add stocks and optimize to see a clear recommendation.";
+
+    // Count near-signal stocks
+    const nearBuy = signals.filter(
+      (item) => item.signal === "HOLD" && item.rsi !== null && Number(item.rsi) < 40
+    ).length;
+    const nearSell = signals.filter(
+      (item) => item.signal === "HOLD" && item.rsi !== null && Number(item.rsi) > 60
+    ).length;
+
     if (buy / total >= 0.5) return "At least half of your stocks look positive. This portfolio may be worth adding to carefully.";
     if (sell / total >= 0.5) return "At least half of your stocks look weak. Consider reducing exposure or waiting.";
+
+    if (nearBuy > 0 && nearSell === 0) {
+      return `${nearBuy} stock${nearBuy > 1 ? "s are" : " is"} approaching a BUY signal (RSI near oversold). Keep watching — a trigger may be close.`;
+    }
+    if (nearSell > 0 && nearBuy === 0) {
+      return `${nearSell} stock${nearSell > 1 ? "s are" : " is"} approaching a SELL signal (RSI near overbought). Consider setting a stop-loss.`;
+    }
+    if (nearBuy > 0 && nearSell > 0) {
+      return `Mixed signals: ${nearBuy} stock${nearBuy > 1 ? "s" : ""} near a BUY and ${nearSell} near a SELL. Monitor both carefully.`;
+    }
+
     return "Most of your stocks look neutral. No strong reason to buy or sell right now.";
   };
   const openGuide = () => {
@@ -471,9 +515,23 @@ function Dashboard({ onLogout }) {
     return "low";
   };
   const getPredictionLabel = () => {
-    const level = getReturnSignalLevel();
-    if (level === "pending") return "calculating";
-    return level;
+    const score = Number(ensemblePrediction);
+    if (Number.isNaN(score)) return "Calculating...";
+    if (score > 0.15) return "Strong Positive Outlook";
+    if (score > 0.05) return "Moderate Positive Outlook";
+    if (score >= -0.05) return "Neutral Outlook";
+    if (score >= -0.15) return "Cautious Outlook";
+    return "Negative Outlook";
+  };
+
+  const getPredictionColor = () => {
+    const score = Number(ensemblePrediction);
+    if (Number.isNaN(score)) return "neutral";
+    if (score > 0.15) return "strong-positive";
+    if (score > 0.05) return "moderate-positive";
+    if (score >= -0.05) return "neutral-outlook";
+    if (score >= -0.15) return "cautious";
+    return "negative";
   };
   const formatFeatureValue = (key, value) => {
     const numeric = Number(value);
@@ -614,8 +672,9 @@ function Dashboard({ onLogout }) {
           {ensemblePrediction !== null && (
             <div className="prediction-result">
               <div className="prediction-main">
-                <span>Prediction</span>
-                <strong>{Number(ensemblePrediction).toFixed(6)}</strong>
+                <span>AI Outlook</span>
+                <strong className={`prediction-label prediction-${getPredictionColor()}`}>{getPredictionLabel()}</strong>
+                <small className="prediction-score">(score: {Number(ensemblePrediction).toFixed(4)})</small>
               </div>
               {topExplanationFeature && (
                 <p className="prediction-summary">

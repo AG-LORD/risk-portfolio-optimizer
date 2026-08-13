@@ -1,16 +1,10 @@
-/*
-Shown immediately on login: all 50 NIFTY stocks, color-coded by the fused
-composite signal (Step 4). Matches the exact shape returned by
-GET /dashboard/stocks (Step 5):
-  { last_refreshed_at, count, stocks: [{ ticker, sector, signal, color,
-    score, confidence, expected_return, risk_level, ... }] }
-*/
+/* Displays cached NIFTY 50 signals and lets the parent manage selections. */
 import { useEffect, useState } from "react";
 
 const COLOR_STYLES = {
-  green:  { bg: "#dcfce7", border: "#16a34a", label: "BUY" },
-  yellow: { bg: "#fef9c3", border: "#ca8a04", label: "HOLD" },
-  red:    { bg: "#fee2e2", border: "#dc2626", label: "SELL" },
+  green: { signal: "BUY", className: "buy" },
+  yellow: { signal: "HOLD", className: "hold" },
+  red: { signal: "SELL", className: "sell" }
 };
 
 export default function StockUniverseDashboard({ onSelectStock, onViewStock, selectedTickers = [] }) {
@@ -21,17 +15,17 @@ export default function StockUniverseDashboard({ onSelectStock, onViewStock, sel
 
   const load = () => {
     fetch("http://127.0.0.1:5000/dashboard/stocks")
-      .then(r => {
-        if (!r.ok) throw new Error("Dashboard not ready yet");
-        return r.json();
+      .then((response) => {
+        if (!response.ok) throw new Error("Dashboard not ready yet");
+        return response.json();
       })
-      .then(data => {
+      .then((data) => {
         setStocks(data.stocks || []);
         setLastRefreshed(data.last_refreshed_at);
         setError(null);
         setLoading(false);
       })
-      .catch(err => {
+      .catch((err) => {
         setError(err.message);
         setLoading(false);
       });
@@ -39,63 +33,85 @@ export default function StockUniverseDashboard({ onSelectStock, onViewStock, sel
 
   useEffect(() => {
     load();
-    // Poll for the scheduler's periodic recompute (Step 8); this does NOT
-    // trigger a recompute itself, just re-reads whatever's cached.
     const interval = setInterval(load, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
 
-  if (loading) return <div>Loading stock universe...</div>;
-  if (error) return <div style={{ color: "#dc2626" }}>{error} — try again in a moment.</div>;
+  if (loading) return <div className="universe-feedback">Loading stock universe...</div>;
+  if (error) return <div className="universe-feedback universe-error">{error} — try again in a moment.</div>;
+
+  const signalCount = (color) => stocks.filter((stock) => stock.color === color).length;
 
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
-        <h2 style={{ margin: 0 }}>NIFTY 50 — Live Signals</h2>
-        <span style={{ color: "#666", fontSize: 13 }}>
-          Last refreshed: {lastRefreshed ? new Date(lastRefreshed).toLocaleTimeString() : "—"}
-        </span>
+    <section className="stock-universe">
+      <div className="stock-universe-toolbar">
+        <div>
+          <h2>NIFTY 50 Live Signals</h2>
+          <p>Review each signal, then select stocks for your portfolio.</p>
+        </div>
+        <span className="last-refreshed">Last refreshed: {lastRefreshed ? new Date(lastRefreshed).toLocaleTimeString() : "—"}</span>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 10 }}>
-        {stocks.map(s => {
-          const style = COLOR_STYLES[s.color] || COLOR_STYLES.yellow;
+      <div className="universe-signal-summary" aria-label="Market signal summary">
+        <span><b>{stocks.length}</b> total stocks</span>
+        <span className="buy"><b>{signalCount("green")}</b> BUY</span>
+        <span className="hold"><b>{signalCount("yellow")}</b> HOLD</span>
+        <span className="sell"><b>{signalCount("red")}</b> SELL</span>
+        <span><b>{selectedTickers.length}</b> selected</span>
+      </div>
+
+      <div className="stock-universe-grid">
+        {stocks.map((stock) => {
+          const style = COLOR_STYLES[stock.color] || COLOR_STYLES.yellow;
+          const isSelected = selectedTickers.includes(stock.ticker);
+          const selectWithKeyboard = (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onSelectStock(stock);
+            }
+          };
+
           return (
-            <button
-              key={s.ticker}
-              onClick={() => onSelectStock(s)}
-              aria-pressed={selectedTickers.includes(s.ticker)}
-              style={{
-                background: style.bg, border: `2px solid ${style.border}`,
-                borderRadius: 8, padding: "10px 12px", textAlign: "left", cursor: "pointer",
-                boxShadow: selectedTickers.includes(s.ticker) ? "0 0 0 3px #2563eb" : "none",
-              }}
+            <article
+              key={stock.ticker}
+              className={`stock-signal-card ${style.className} ${isSelected ? "selected" : ""}`}
+              onClick={() => onSelectStock(stock)}
+              onKeyDown={selectWithKeyboard}
+              role="button"
+              tabIndex={0}
+              aria-pressed={isSelected}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontWeight: 700 }}>{s.ticker}</div>
-                <button
-                  type="button"
-                  title={`View ${s.ticker} chart and indicators`}
-                  aria-label={`View ${s.ticker} chart and indicators`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onViewStock(s.ticker);
-                  }}
-                  style={{ border: "1px solid #94a3b8", borderRadius: "50%", width: 22, height: 22, cursor: "pointer", background: "white", fontWeight: 700 }}
-                >
-                  i
-                </button>
+              <div className="stock-card-heading">
+                <div>
+                  <h3>{stock.ticker}</h3>
+                  <p>{stock.sector}</p>
+                </div>
+                <div className="stock-card-actions">
+                  {isSelected && <span className="stock-selected-check" aria-label="Selected">✓</span>}
+                  <button
+                    type="button"
+                    className="stock-detail-button"
+                    title={`View ${stock.ticker} chart and indicators`}
+                    aria-label={`View ${stock.ticker} chart and indicators`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onViewStock(stock.ticker);
+                    }}
+                  >
+                    i
+                  </button>
+                </div>
               </div>
-              <div style={{ fontSize: 11, color: "#555" }}>{s.sector}</div>
-              <div style={{ fontWeight: 600, color: style.border, marginTop: 4 }}>{style.label}</div>
-              <div style={{ fontSize: 11, color: "#555" }}>
-                Exp. return: {(s.expected_return * 100).toFixed(1)}% · Conf: {(s.confidence * 100).toFixed(0)}%
+              <span className="stock-signal-badge">{style.signal}</span>
+              <div className="stock-card-metrics">
+                <div><span>Expected return</span><strong>{(stock.expected_return * 100).toFixed(1)}%</strong></div>
+                <div><span>Confidence</span><strong>{(stock.confidence * 100).toFixed(0)}%</strong></div>
               </div>
-              <div style={{ fontSize: 11, color: "#555" }}>Risk: {s.risk_level}</div>
-            </button>
+              <p className="stock-risk">Risk: <strong>{stock.risk_level}</strong></p>
+            </article>
           );
         })}
       </div>
-    </div>
+    </section>
   );
 }

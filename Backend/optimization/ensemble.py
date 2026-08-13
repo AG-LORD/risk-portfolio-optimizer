@@ -118,6 +118,7 @@ class SimpleEnsembleModel:
             HistGradientBoostingRegressor(random_state=42),
         ]
         self.weights = np.array(weights if weights is not None else [1.0, 1.0, 1.0], dtype=float)
+        self.classifier = None
 
     def _prepare_inference_features(self, X):
         X = np.asarray(X, dtype=float)
@@ -158,12 +159,74 @@ class SimpleEnsembleModel:
         X_scaled = self.scaler.transform(X)
         return [model.predict(X_scaled) for model in self.base_models]
 
+    def predict_with_confidence(self, X):
+        X = self._prepare_inference_features(X)
+        X_scaled = self.scaler.transform(X)
+        predicted_return = float(self.predict(X)[0])
+
+        if self.classifier is not None and hasattr(self.classifier, "predict_proba"):
+            probabilities = self.classifier.predict_proba(X_scaled)[0]
+            classes = [str(label) for label in self.classifier.classes_]
+            probability_by_label = {
+                label: float(probability)
+                for label, probability in zip(classes, probabilities)
+            }
+            signal = max(probability_by_label, key=probability_by_label.get)
+            confidence = float(probability_by_label[signal])
+            for label in ("BUY", "HOLD", "SELL"):
+                probability_by_label.setdefault(label, 0.0)
+            return predicted_return, signal, confidence, probability_by_label
+
+        base_predictions = np.asarray(self.get_base_predictions(X), dtype=float).reshape(len(self.base_models), -1)[:, 0]
+        if predicted_return > 0.05:
+            signal = "BUY"
+        elif predicted_return < -0.05:
+            signal = "SELL"
+        else:
+            signal = "HOLD"
+
+        disagreement = float(np.std(base_predictions))
+        confidence = float(np.clip(1.0 - disagreement / 0.20, 0.0, 1.0))
+        probability_by_label = {"BUY": 0.0, "HOLD": 0.0, "SELL": 0.0}
+        probability_by_label[signal] = confidence
+        remaining = (1.0 - confidence) / 2.0
+        for label in probability_by_label:
+            if label != signal:
+                probability_by_label[label] = remaining
+
+        return predicted_return, signal, confidence, probability_by_label
+
+    def explain(self, X):
+        X = self._prepare_inference_features(X)
+        prediction = float(self.predict(X)[0])
+
+        if hasattr(self.scaler, "mean_"):
+            baseline = np.asarray(self.scaler.mean_, dtype=float)
+        else:
+            baseline = np.zeros(X.shape[1], dtype=float)
+
+        contributions = {}
+        for i, feature_name in enumerate(ENSEMBLE_FEATURE_ORDER):
+            X_ablated = np.array(X, copy=True)
+            X_ablated[:, i] = baseline[i]
+            ablated_prediction = float(self.predict(X_ablated)[0])
+            contributions[feature_name] = prediction - ablated_prediction
+
+        return {
+            "prediction": prediction,
+            "contributions": dict(
+                sorted(contributions.items(), key=lambda item: abs(item[1]), reverse=True)
+            ),
+            "method": "feature_ablation",
+        }
+
     def save(self, filename: str = "ensemble_model.joblib"):
         path = os.path.join(self.model_dir, filename)
         joblib.dump({
             "scaler": self.scaler,
             "models": self.base_models,
             "weights": self.weights,
+            "classifier": self.classifier,
         }, path)
         return path
 
@@ -173,4 +236,5 @@ class SimpleEnsembleModel:
         self.scaler = data["scaler"]
         self.base_models = data["models"]
         self.weights = np.asarray(data["weights"], dtype=float)
+        self.classifier = data.get("classifier")
         return self

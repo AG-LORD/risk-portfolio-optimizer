@@ -87,3 +87,65 @@ def fetch_benchmark_data(ticker="^NSEI"):
     series = data.iloc[:, 0].copy()
     series.name = "benchmark"
     return series
+
+
+def _extract_ohlcv_data(raw, requested):
+    if raw.empty:
+        return {}
+
+    ohlcv_by_ticker = {}
+    expected_columns = ["Open", "High", "Low", "Close", "Volume"]
+
+    if isinstance(raw.columns, pd.MultiIndex):
+        for ticker in requested:
+            if ticker not in raw.columns.get_level_values(1):
+                continue
+            ticker_data = raw.xs(ticker, axis=1, level=1, drop_level=True)
+            available = [column for column in expected_columns if column in ticker_data.columns]
+            if len(available) < len(expected_columns):
+                continue
+            cleaned = ticker_data[expected_columns].dropna(how="any")
+            if not cleaned.empty:
+                ohlcv_by_ticker[ticker] = cleaned
+    else:
+        available = [column for column in expected_columns if column in raw.columns]
+        if len(requested) == 1 and len(available) == len(expected_columns):
+            cleaned = raw[expected_columns].dropna(how="any")
+            if not cleaned.empty:
+                ohlcv_by_ticker[requested[0]] = cleaned
+
+    return ohlcv_by_ticker
+
+
+def fetch_ohlcv_data(stocks, period="1y", interval="1d"):
+    requested = list(stocks) if isinstance(stocks, (list, tuple, set, pd.Index)) else [stocks]
+    requested = [str(s) for s in requested]
+
+    raw = yf.download(
+        requested,
+        period=period,
+        interval=interval
+    )
+    ohlcv_by_ticker = _extract_ohlcv_data(raw, requested)
+    valid_tickers = [ticker for ticker in requested if ticker in ohlcv_by_ticker]
+    failed_tickers = [ticker for ticker in requested if ticker not in valid_tickers]
+
+    for ticker in failed_tickers:
+        print(f"Warning: OHLCV market data unavailable for {ticker}")
+
+    return ohlcv_by_ticker, valid_tickers, failed_tickers
+
+
+def fetch_india_vix(period="1y", interval="1d"):
+    raw = yf.download(
+        "^INDIAVIX",
+        period=period,
+        interval=interval
+    )
+    data = _extract_price_data(raw)
+    if data.empty:
+        return pd.Series(dtype=float)
+
+    series = data.iloc[:, 0].copy()
+    series.name = "india_vix"
+    return series

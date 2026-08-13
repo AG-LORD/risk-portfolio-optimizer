@@ -30,9 +30,9 @@ export default function CandlestickChart({ candles, overlays, rsi, markers = [],
     // --- Price chart: candles + SMA20/SMA50 overlays ---
     const priceChart = createChart(priceContainerRef.current, {
       height,
-      layout: { background: { color: "transparent" }, textColor: "#333" },
-      grid: { vertLines: { color: "#eee" }, horzLines: { color: "#eee" } },
-      timeScale: { borderColor: "#ddd" },
+      layout: { background: { color: "transparent" }, textColor: "#cbd5e1" },
+      grid: { vertLines: { color: "#243145" }, horzLines: { color: "#243145" } },
+      timeScale: { borderColor: "#334155" },
     });
 
     const candleSeries = priceChart.addSeries(CandlestickSeries, {
@@ -67,9 +67,9 @@ export default function CandlestickChart({ candles, overlays, rsi, markers = [],
     if (rsiContainerRef.current && rsi?.length) {
       rsiChart = createChart(rsiContainerRef.current, {
         height: 110,
-        layout: { background: { color: "transparent" }, textColor: "#333" },
-        grid: { vertLines: { color: "#eee" }, horzLines: { color: "#eee" } },
-        timeScale: { borderColor: "#ddd" },
+        layout: { background: { color: "transparent" }, textColor: "#cbd5e1" },
+        grid: { vertLines: { color: "#243145" }, horzLines: { color: "#243145" } },
+        timeScale: { borderColor: "#334155" },
         rightPriceScale: { autoScale: false },
       });
       const rsiSeries = rsiChart.addSeries(LineSeries, { color: "#f97316", lineWidth: 1, title: "RSI (14)" });

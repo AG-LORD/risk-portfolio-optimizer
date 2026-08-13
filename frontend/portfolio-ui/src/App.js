@@ -1,6 +1,7 @@
 import { useState } from "react";
 import UniverseDashboard from "./pages/UniverseDashboard";
 import Dashboard from "./pages/Dashboard";
+import PortfolioDashboard from "./pages/PortfolioDashboard";
 import KYCPage from "./pages/KYCPage";
 import LoginPage from "./pages/LoginPage";
 
@@ -15,7 +16,10 @@ function App() {
   };
 
   const [view, setView] = useState(deriveView);
-  const [dashboardScreen, setDashboardScreen] = useState("universe");
+  // This project uses component state for navigation rather than a router.
+  // Keep the selected basket here so it survives moving between the dashboard,
+  // stock universe, and portfolio setup screens.
+  const [dashboardScreen, setDashboardScreen] = useState("home");
   const [portfolioStocks, setPortfolioStocks] = useState([]);
 
   // Called by LoginPage after a successful /signup response.
@@ -44,7 +48,7 @@ function App() {
     localStorage.removeItem("token");
     localStorage.removeItem("kyc_status");
     localStorage.removeItem("hasSeenGuide");
-    setDashboardScreen("universe");
+    setDashboardScreen("home");
     setPortfolioStocks([]);
     setView("login");
   };
@@ -72,7 +76,25 @@ function App() {
     );
   }
 
-  return <UniverseDashboard onLogout={handleLogout} onBuildPortfolio={handleBuildPortfolio} />;
+  if (dashboardScreen === "universe") {
+    return (
+      <UniverseDashboard
+        onLogout={handleLogout}
+        onBackToDashboard={() => setDashboardScreen("home")}
+        selectedStocks={portfolioStocks}
+        onSelectedStocksChange={setPortfolioStocks}
+        onBuildPortfolio={handleBuildPortfolio}
+      />
+    );
+  }
+
+  return (
+    <PortfolioDashboard
+      onLogout={handleLogout}
+      onSelectStocks={() => setDashboardScreen("universe")}
+      selectedStockCount={portfolioStocks.length}
+    />
+  );
 }
 
 export default App;

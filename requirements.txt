@@ -9,3 +9,5 @@ scikit-learn
 joblib
 psycopg2-binary
 yfinance
+bcrypt
+python-dotenv

@@ -5,9 +5,9 @@ POST /dashboard/refresh          -> manually re-score everything now
 
 This is what makes the platform show information on login instead of only
 after a user manually searches for a ticker. Scoring is synchronous on
-first request (there's no background scheduler yet -- that's Step 8), so
-the very first call after a server restart will be slow (fetches + scores
-all 50 stocks); every call after that serves the cache.
+first request (there's no background scheduler yet), so the very first
+call after a server restart will be slow (fetches + scores all 50 stocks);
+every call after that serves the cache.
 """
 
 from datetime import datetime, timezone
@@ -15,7 +15,8 @@ from datetime import datetime, timezone
 from flask import Blueprint, jsonify
 
 from data.fetch_data import fetch_ohlcv_data, fetch_benchmark_data, fetch_india_vix
-from data.stock_sectors import STOCK_SECTORS
+from data.stock_sectors import STOCK_SECTORS, get_sector
+from preprocessing.live_features import compute_sector_returns
 from signals.composite_score import compute_composite_signal
 from optimization.model_loader import get_ensemble_model
 
@@ -45,6 +46,10 @@ def refresh_dashboard():
     benchmark_returns = benchmark_prices.pct_change().dropna()
     vix_series = fetch_india_vix()
 
+    # Computed once across the whole universe (not per-stock) so it stays
+    # consistent with how sector_return was computed during training.
+    sector_returns = compute_sector_returns(ohlcv_by_ticker)
+
     model = get_ensemble_model()
 
     new_cache = {}
@@ -55,6 +60,7 @@ def refresh_dashboard():
             continue  # not enough history for a reliable beta/volatility calc yet
 
         stock_returns = ohlcv_df["Close"].pct_change().dropna()
+        sector_return = sector_returns.get(get_sector(base_ticker), 0.0)
 
         try:
             result = compute_composite_signal(
@@ -64,6 +70,7 @@ def refresh_dashboard():
                 benchmark_returns=benchmark_returns,
                 model=model,
                 vix_series=vix_series,
+                sector_return=sector_return,
             )
         except Exception as exc:
             print(f"Warning: failed to score {base_ticker}: {exc}")

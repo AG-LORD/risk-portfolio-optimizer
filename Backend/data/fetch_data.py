@@ -74,11 +74,11 @@ def fetch_data(stocks, period="2y", interval="1d"):
     return filtered_data, valid_tickers, failed_tickers
 
 
-def fetch_benchmark_data(ticker="^NSEI"):
+def fetch_benchmark_data(ticker="^NSEI", period="2y", interval="1d"):
     raw = yf.download(
         ticker,
-        period="2y",
-        interval="1d"
+        period=period,
+        interval=interval
     )
     data = _extract_price_data(raw)
     if data.empty:
@@ -89,49 +89,57 @@ def fetch_benchmark_data(ticker="^NSEI"):
     return series
 
 
-def _extract_ohlcv_data(raw, requested):
-    if raw.empty:
-        return {}
-
-    ohlcv_by_ticker = {}
-    expected_columns = ["Open", "High", "Low", "Close", "Volume"]
-
-    if isinstance(raw.columns, pd.MultiIndex):
-        for ticker in requested:
-            if ticker not in raw.columns.get_level_values(1):
-                continue
-            ticker_data = raw.xs(ticker, axis=1, level=1, drop_level=True)
-            available = [column for column in expected_columns if column in ticker_data.columns]
-            if len(available) < len(expected_columns):
-                continue
-            cleaned = ticker_data[expected_columns].dropna(how="any")
-            if not cleaned.empty:
-                ohlcv_by_ticker[ticker] = cleaned
-    else:
-        available = [column for column in expected_columns if column in raw.columns]
-        if len(requested) == 1 and len(available) == len(expected_columns):
-            cleaned = raw[expected_columns].dropna(how="any")
-            if not cleaned.empty:
-                ohlcv_by_ticker[requested[0]] = cleaned
-
-    return ohlcv_by_ticker
-
-
 def fetch_ohlcv_data(stocks, period="1y", interval="1d"):
-    requested = list(stocks) if isinstance(stocks, (list, tuple, set, pd.Index)) else [stocks]
+    requested = (
+        list(stocks)
+        if isinstance(stocks, (list, tuple, set, pd.Index))
+        else [stocks]
+    )
     requested = [str(s) for s in requested]
 
     raw = yf.download(
         requested,
         period=period,
-        interval=interval
+        interval=interval,
+        group_by="ticker",
+        auto_adjust=False,
+        progress=False,
+        threads=False,
+        actions=False,
     )
-    ohlcv_by_ticker = _extract_ohlcv_data(raw, requested)
-    valid_tickers = [ticker for ticker in requested if ticker in ohlcv_by_ticker]
-    failed_tickers = [ticker for ticker in requested if ticker not in valid_tickers]
+
+    if raw.empty:
+        return {}, [], requested
+
+    ohlcv_by_ticker = {}
+    required = ["Open", "High", "Low", "Close", "Volume"]
+
+    if isinstance(raw.columns, pd.MultiIndex):
+        for ticker in requested:
+            if ticker not in raw.columns.get_level_values(0):
+                continue
+
+            ticker_df = raw[ticker].copy()
+            if not all(col in ticker_df.columns for col in required):
+                continue
+
+            ticker_df = ticker_df[required].dropna(how="all")
+            if not ticker_df.empty:
+                ohlcv_by_ticker[ticker] = ticker_df
+
+    else:
+        if all(col in raw.columns for col in required):
+            ticker = requested[0]
+            ohlcv_by_ticker[ticker] = raw[required].copy().dropna(how="all")
+
+    valid_tickers = list(ohlcv_by_ticker.keys())
+    failed_tickers = [
+        ticker for ticker in requested
+        if ticker not in valid_tickers
+    ]
 
     for ticker in failed_tickers:
-        print(f"Warning: OHLCV market data unavailable for {ticker}")
+        print(f"Warning: OHLCV data unavailable for {ticker}")
 
     return ohlcv_by_ticker, valid_tickers, failed_tickers
 
@@ -140,12 +148,29 @@ def fetch_india_vix(period="1y", interval="1d"):
     raw = yf.download(
         "^INDIAVIX",
         period=period,
-        interval=interval
+        interval=interval,
+        auto_adjust=False,
+        progress=False,
+        threads=False,
+        actions=False,
     )
-    data = _extract_price_data(raw)
-    if data.empty:
+
+    if raw.empty:
         return pd.Series(dtype=float)
 
-    series = data.iloc[:, 0].copy()
+    if isinstance(raw.columns, pd.MultiIndex):
+        if "Close" not in raw.columns.get_level_values(0):
+            return pd.Series(dtype=float)
+
+        data = raw["Close"]
+        series = data.iloc[:, 0] if isinstance(data, pd.DataFrame) else data
+    else:
+        if "Close" not in raw.columns:
+            return pd.Series(dtype=float)
+
+        series = raw["Close"]
+
+    series = series.dropna().copy()
     series.name = "india_vix"
+
     return series

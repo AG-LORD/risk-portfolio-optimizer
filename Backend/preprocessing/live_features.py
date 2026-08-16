@@ -36,12 +36,62 @@ def _universe_sector_exposure(ticker: str) -> float:
     return float(matching / len(STOCK_SECTORS))
 
 
-def build_feature_row(ticker: str, ohlcv_df: pd.DataFrame, stock_returns: pd.Series,
-                       benchmark_returns: pd.Series) -> dict:
-    """Turn one stock's price history into the 5-feature row the ensemble
+def _market_return_from_benchmark(benchmark_returns: pd.Series, lookback: int = 5) -> float:
+    """5-day cumulative benchmark return, computed from a daily-returns
+    series so callers only need to fetch benchmark prices once. Mirrors
+    benchmark.pct_change(5) used during training (optimization/train_ensemble.py)."""
+    if benchmark_returns is None:
+        return 0.0
+    returns = pd.Series(benchmark_returns).dropna()
+    if returns.empty:
+        return 0.0
+    if len(returns) >= lookback:
+        return float((1.0 + returns.tail(lookback)).prod() - 1.0)
+    return float(returns.iloc[-1])
+
+
+def compute_sector_returns(ohlcv_by_ticker: dict, lookback: int = 5) -> dict:
+    """Latest `lookback`-day average return per sector, computed once across
+    the whole universe. Mirrors the sector_return feature computed during
+    training (optimization/train_ensemble.py build_training_data) so live
+    scoring stays consistent with what the model was trained on -- call this
+    once per dashboard refresh cycle, not once per stock.
+    """
+    sector_closes: dict = {}
+    for ticker, df in ohlcv_by_ticker.items():
+        if df is None or df.empty or "Close" not in df:
+            continue
+        base_ticker = str(ticker).replace(".NS", "").upper()
+        sector = get_sector(base_ticker)
+        sector_closes.setdefault(sector, []).append(df["Close"])
+
+    sector_returns = {}
+    for sector, close_list in sector_closes.items():
+        rets = []
+        for close in close_list:
+            close = close.dropna()
+            if len(close) > lookback and close.iloc[-1 - lookback] != 0:
+                rets.append(float(close.iloc[-1] / close.iloc[-1 - lookback] - 1.0))
+        sector_returns[sector] = float(np.mean(rets)) if rets else 0.0
+    return sector_returns
+
+
+def build_feature_row(
+    ticker: str,
+    ohlcv_df: pd.DataFrame,
+    stock_returns: pd.Series,
+    benchmark_returns: pd.Series,
+    sector_return: float = 0.0,
+) -> dict:
+    """Turn one stock's price history into the feature row the ensemble
     model was trained on. Reuses extract_ensemble_features_from_price_series
     (optimization/ensemble.py) rather than recomputing recent_return /
-    volatility / momentum a second time.
+    volatility / momentum / RSI / MACD a second time.
+
+    `sector_return` should come from compute_sector_returns(), computed once
+    for the whole universe by the caller (e.g. dashboard_routes.refresh_dashboard)
+    and passed in per-ticker -- it defaults to 0.0 (neutral) for callers that
+    only have a single stock in scope (e.g. app.py's single-ticker lookups).
 
     Returns None if there isn't enough price history yet (mirrors the
     ValueError extract_ensemble_features_from_price_series raises for
@@ -51,12 +101,17 @@ def build_feature_row(ticker: str, ohlcv_df: pd.DataFrame, stock_returns: pd.Ser
         return None
 
     sector_exposure = _universe_sector_exposure(ticker)
+    market_return = _market_return_from_benchmark(benchmark_returns)
+    volume_series = ohlcv_df["Volume"] if "Volume" in ohlcv_df else None
 
     try:
         feature_vector = extract_ensemble_features_from_price_series(
             ohlcv_df["Close"],
             sector_exposure=sector_exposure,
             risk_score=None,
+            market_return=market_return,
+            sector_return=sector_return,
+            volume_series=volume_series,
         )
     except ValueError:
         return None
@@ -129,9 +184,8 @@ def leading_signal(df: pd.DataFrame, vix_series: pd.Series = None) -> dict:
     Combine the four price/volume-based leading indicators into one vote,
     mirroring the scoring pattern used for lagging indicators in
     trading_signals.py so the two can be merged consistently in
-    composite_score.py (Phase 8, next step). India VIX is folded in as a
-    market-wide dampener rather than a per-stock vote, since it doesn't
-    belong to any single stock.
+    composite_score.py. India VIX is folded in as a market-wide dampener
+    rather than a per-stock vote, since it doesn't belong to any single stock.
 
     Returns: {"signal": "BUY"|"SELL"|"HOLD", "score": float, "detail": {...}}
     """

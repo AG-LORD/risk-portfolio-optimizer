@@ -226,6 +226,20 @@ def feature_support_label(key, value):
         if value < 0.96:
             return "SELL"
         return "HOLD"
+    if key == "rsi":
+        if value < 35:
+            return "BUY"
+        if value > 65:
+            return "SELL"
+        return "HOLD"
+    if key in ("sma_ratio", "ema_ratio", "macd", "macd_signal", "market_return", "sector_return"):
+        if value > 0:
+            return "BUY"
+        if value < 0:
+            return "SELL"
+        return "HOLD"
+    if key == "volume_change":
+        return "HOLD"
     return "HOLD"
 
 
@@ -246,6 +260,22 @@ def feature_plain_explanation(key, value):
         return f"About {value * 100:.2f}% of the selected stocks are in this stock's sector."
     if key == "risk_score":
         return f"The risk score is {value:.2f}; higher means the stock looks more stable."
+    if key == "rsi":
+        return f"RSI is {value:.1f}; below 35 suggests oversold, above 65 suggests overbought."
+    if key in ("sma_ratio", "ema_ratio"):
+        direction = "above" if value >= 0 else "below"
+        return f"Price is {abs(value) * 100:.2f}% {direction} its moving-average trend line."
+    if key in ("macd", "macd_signal"):
+        return f"MACD-based trend value is {value:.4f}; positive favors upward momentum."
+    if key == "volume_change":
+        direction = "up" if value >= 0 else "down"
+        return f"5-day trading volume is {direction} {abs(value) * 100:.2f}%."
+    if key == "market_return":
+        direction = "gained" if value >= 0 else "fell"
+        return f"The NIFTY 50 benchmark {direction} {abs(value) * 100:.2f}% over the last 5 trading days."
+    if key == "sector_return":
+        direction = "gained" if value >= 0 else "fell"
+        return f"This stock's sector peers {direction} {abs(value) * 100:.2f}% on average over 5 days."
     return "Calculated from recent market data."
 
 
@@ -306,14 +336,27 @@ def calculate_dynamic_ensemble_features(data):
     ticker = normalize_nse_ticker(data.get("ticker"))
     sector_exposure = calculate_dynamic_sector_exposure(ticker, data)
 
-    price_data, valid_tickers, failed_tickers = fetch_data([ticker], period="6mo", interval="1d")
+    ohlcv_by_ticker, valid_tickers, failed_tickers = fetch_ohlcv_data([ticker], period="1y", interval="1d")
     if not valid_tickers:
         raise ValueError(f"Unable to fetch price data for ticker {ticker}")
+    ohlcv_df = ohlcv_by_ticker[valid_tickers[0]]
+
+    benchmark_prices = fetch_benchmark_data(BENCHMARK_TICKER)
+    benchmark_returns = benchmark_prices.pct_change().dropna()
+    if len(benchmark_returns) >= 5:
+        market_return = float((1 + benchmark_returns.tail(5)).prod() - 1.0)
+    elif not benchmark_returns.empty:
+        market_return = float(benchmark_returns.iloc[-1])
+    else:
+        market_return = 0.0
 
     features = extract_ensemble_features_from_price_series(
-        price_data[valid_tickers[0]],
+        ohlcv_df["Close"],
         sector_exposure=sector_exposure,
         risk_score=None,
+        market_return=market_return,
+        sector_return=0.0,  # single-ticker lookup: sector peers aren't fetched here
+        volume_series=ohlcv_df.get("Volume"),
     )
     return features, format_dynamic_feature_details(features), ticker_to_stock_symbol(ticker)
 

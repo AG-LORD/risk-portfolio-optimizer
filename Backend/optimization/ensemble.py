@@ -1,33 +1,72 @@
-import os
 import logging
+import os
 from typing import Optional, Sequence
 
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import HistGradientBoostingRegressor, RandomForestRegressor
-from sklearn.linear_model import Ridge
+from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
+from sklearn.linear_model import RidgeClassifier
+from sklearn.metrics import f1_score
 from sklearn.preprocessing import StandardScaler
 
 
+CLASS_LABELS = np.array(["SELL", "HOLD", "BUY"], dtype=object)
+
 ENSEMBLE_FEATURE_METADATA = [
-    {"key": "recent_return", "label": "Recent Return", "description": "Latest price return change."},
-    {"key": "volatility", "label": "Volatility", "description": "Short-term price movement size."},
-    {"key": "momentum", "label": "Momentum", "description": "Direction and speed of trend."},
-    {"key": "sector_exposure", "label": "Sector Exposure", "description": "Industry weight signal."},
-    {"key": "risk_score", "label": "Risk Score", "description": "Risk signal for the asset mix."},
+    {"key": "recent_return", "label": "Recent Return", "description": "1-day price return."},
+    {"key": "volatility", "label": "Volatility", "description": "20-day daily volatility."},
+    {"key": "momentum", "label": "Momentum", "description": "Trend direction over a 20-day horizon."},
+    {"key": "sma_ratio", "label": "SMA Ratio", "description": "Price relative to 20-day moving average."},
+    {"key": "ema_ratio", "label": "EMA Ratio", "description": "Price relative to 20-day EMA trend."},
+    {"key": "rsi", "label": "RSI", "description": "Relative Strength Index."},
+    {"key": "macd", "label": "MACD", "description": "Moving average convergence divergence."},
+    {"key": "macd_signal", "label": "MACD Signal", "description": "MACD signal line."},
+    {"key": "volume_change", "label": "Volume Change", "description": "5-day volume expansion or contraction."},
+    {"key": "market_return", "label": "Market Return", "description": "Recent benchmark (NIFTY 50) 5-day return."},
+    {"key": "sector_return", "label": "Sector Return", "description": "Average 5-day return of same-sector peers."},
+    {"key": "sector_exposure", "label": "Sector Exposure", "description": "Sector representation in the universe/portfolio."},
+    {"key": "risk_score", "label": "Risk Score", "description": "Risk signal derived from volatility."},
 ]
 ENSEMBLE_FEATURE_ORDER = [feature["key"] for feature in ENSEMBLE_FEATURE_METADATA]
 VOLATILITY_FEATURE_INDEX = ENSEMBLE_FEATURE_ORDER.index("volatility")
 logger = logging.getLogger(__name__)
 
 
+def _safe_float(value, default=0.0):
+    value = float(value) if pd.notna(value) else default
+    return value if np.isfinite(value) else default
+
+
+def _compute_rsi(close: pd.Series, window: int = 14) -> pd.Series:
+    delta = close.diff()
+    gain = delta.clip(lower=0).ewm(alpha=1 / window, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1 / window, adjust=False).mean()
+    rs = gain / loss.replace(0, np.nan)
+    rsi = 100 - (100 / (1 + rs))
+    rsi = rsi.fillna(50.0)
+    return rsi
+
+
 def extract_ensemble_features_from_price_series(
     price_series: pd.Series,
     sector_exposure: float = 0.0,
     risk_score: Optional[float] = None,
+    market_return: float = 0.0,
+    sector_return: float = 0.0,
+    volume_series: Optional[pd.Series] = None,
 ) -> np.ndarray:
-    prices = price_series.dropna().astype(float)
+    """Build one live/inference feature row for a single stock.
+
+    This mirrors the feature engineering done in bulk over historical data by
+    optimization/train_ensemble.py (build_training_data) as closely as
+    possible, so a model trained on real market data sees the same kind of
+    inputs at inference time (no train/serve skew). `market_return` and
+    `sector_return` are computed by the caller (they depend on data this
+    function doesn't have access to -- the benchmark index and sector
+    peers) and simply passed through here.
+    """
+    prices = pd.Series(price_series).dropna().astype(float)
     if prices.empty:
         raise ValueError("Price series is empty.")
 
@@ -35,169 +74,220 @@ def extract_ensemble_features_from_price_series(
     if returns.empty:
         raise ValueError("Not enough price history to calculate features.")
 
-    recent_return = (
-        float((prices.iloc[-1] - prices.iloc[-7]) / prices.iloc[-7])
-        if len(prices) >= 7
-        else float(returns.iloc[-1])
-    )
-    volatility = float(returns.std())
-    momentum = (
-        float((prices.iloc[-1] - prices.iloc[-30]) / prices.iloc[-30])
-        if len(prices) >= 30
-        else float(returns.tail(5).sum())
-    )
+    recent_1d = _safe_float(prices.pct_change().iloc[-1]) if len(prices) >= 2 else 0.0
+    recent_20d = _safe_float((prices.iloc[-1] / prices.iloc[-20] - 1.0)) if len(prices) >= 20 else recent_1d
+    volatility = _safe_float(returns.tail(20).std(ddof=0))
+    momentum = recent_20d
 
-    if np.isnan(recent_return):
-        recent_return = 0.0
-    if np.isnan(volatility) or volatility == 0.0:
-        volatility = float(returns.std()) if not returns.empty else 0.0
-    if np.isnan(momentum):
-        momentum = 0.0
+    sma_20 = prices.rolling(20, min_periods=5).mean()
+    ema_20 = prices.ewm(span=20, adjust=False).mean()
+    sma_ratio = _safe_float((prices.iloc[-1] / sma_20.iloc[-1]) - 1.0) if len(sma_20) else 0.0
+    ema_ratio = _safe_float((prices.iloc[-1] / ema_20.iloc[-1]) - 1.0) if len(ema_20) else 0.0
+
+    rsi = _compute_rsi(prices, 14).iloc[-1]
+    ema_short = prices.ewm(span=12, adjust=False).mean()
+    ema_long = prices.ewm(span=26, adjust=False).mean()
+    macd = _safe_float((ema_short.iloc[-1] - ema_long.iloc[-1]))
+    signal_line = (ema_short - ema_long).ewm(span=9, adjust=False).mean()
+    macd_signal = _safe_float(signal_line.iloc[-1])
+
+    volume = pd.Series(volume_series).dropna().astype(float) if volume_series is not None else pd.Series(dtype=float)
+    if volume.empty or len(volume) < 6:
+        volume_change = 0.0
+    else:
+        volume_change = _safe_float(volume.pct_change(5).iloc[-1])
 
     if risk_score is None:
-        risk_score = 1 - volatility
+        risk_score = 1.0 - min(max(volatility, 0.0), 1.0)
 
     feature_vector = [
-        recent_return,
+        recent_1d,
         volatility,
         momentum,
-        float(sector_exposure),
-        float(risk_score),
+        sma_ratio,
+        ema_ratio,
+        float(rsi),
+        macd,
+        macd_signal,
+        volume_change,
+        _safe_float(market_return),
+        _safe_float(sector_return),
+        _safe_float(sector_exposure),
+        _safe_float(risk_score),
     ]
     return np.asarray(feature_vector, dtype=float).reshape(1, -1)
 
 
-def build_dummy_ensemble_dataset(n_samples: int = 2000, random_state: int = 42) -> pd.DataFrame:
-    rng = np.random.default_rng(random_state)
-
-    recent_return = rng.uniform(-0.15, 0.20, size=n_samples)
-    volatility = np.abs(rng.normal(0.18, 0.07, size=n_samples))
-    momentum = rng.uniform(-0.20, 0.25, size=n_samples)
-    sector_exposure = rng.uniform(0.1, 1.5, size=n_samples)
-    risk_score = -0.6 * volatility + 0.4 * momentum + rng.normal(0.0, 0.05, size=n_samples)
-
-    target = (
-        0.6 * recent_return
-        - 0.8 * volatility
-        + 1.2 * momentum
-        + 0.3 * sector_exposure
-        + 0.5 * risk_score
-        + rng.normal(0.0, 0.03, size=n_samples)
-    )
-    target = np.clip(target, -0.3, 0.4)
-
-    df = pd.DataFrame({
-        "recent_return": recent_return,
-        "volatility": volatility,
-        "momentum": momentum,
-        "sector_exposure": sector_exposure,
-        "risk_score": risk_score,
-        "target": target,
-    })
-    df["label"] = np.select(
-        [df["target"] > 0.05, df["target"] < -0.05],
-        ["BUY", "SELL"],
-        default="HOLD",
-    )
-    return df
-
-
 class SimpleEnsembleModel:
-    """Simple ensemble model for regression predictions.
-
-    This ensemble fits three base regressors and averages their predictions.
-    It is intentionally simple so the ML part is easy to extend later.
-    """
+    """Leakage-safe three-model BUY/HOLD/SELL ensemble for real market data."""
 
     def __init__(self, model_dir: Optional[str] = None, weights: Optional[Sequence[float]] = None):
         self.model_dir = model_dir or os.getcwd()
         self.scaler = StandardScaler()
         self.base_models = [
-            Ridge(alpha=1.0, random_state=42),
-            RandomForestRegressor(n_estimators=100, random_state=42),
-            HistGradientBoostingRegressor(random_state=42),
+            RidgeClassifier(class_weight="balanced", alpha=1.0),
+            RandomForestClassifier(
+                n_estimators=500,
+                max_depth=12,
+                min_samples_leaf=4,
+                class_weight="balanced_subsample",
+                random_state=42,
+            ),
+            HistGradientBoostingClassifier(
+                learning_rate=0.05,
+                max_depth=5,
+                max_leaf_nodes=31,
+                max_iter=500,
+                random_state=42,
+                class_weight="balanced",
+            ),
         ]
+        self.label_order = np.array(CLASS_LABELS, dtype=object)
         self.weights = np.array(weights if weights is not None else [1.0, 1.0, 1.0], dtype=float)
-        self.classifier = None
+        self.feature_names = list(ENSEMBLE_FEATURE_ORDER)
 
-    def _prepare_inference_features(self, X):
+    def _normalize_feature_matrix(self, X):
         X = np.asarray(X, dtype=float)
         if X.ndim == 1:
             X = X.reshape(1, -1)
 
-        if X.shape[1] > VOLATILITY_FEATURE_INDEX:
-            negative_volatility = X[:, VOLATILITY_FEATURE_INDEX] < 0
-            if np.any(negative_volatility):
-                logger.warning("Negative volatility feature received during inference; clipping to 0.0.")
-                X = X.copy()
-                X[negative_volatility, VOLATILITY_FEATURE_INDEX] = 0.0
+        expected = len(self.feature_names)
+        if X.shape[1] < expected:
+            pad = np.zeros((X.shape[0], expected - X.shape[1]), dtype=float)
+            X = np.hstack([X, pad])
+        elif X.shape[1] > expected:
+            X = X[:, :expected]
 
+        negative_volatility = X[:, VOLATILITY_FEATURE_INDEX] < 0
+        if np.any(negative_volatility):
+            X = X.copy()
+            X[negative_volatility, VOLATILITY_FEATURE_INDEX] = 0.0
         return X
 
-    def fit(self, X, y):
-        X = np.asarray(X, dtype=float)
-        y = np.asarray(y, dtype=float)
+    def _sort_probability_matrix(self, proba, model):
+        if proba.ndim == 1:
+            proba = proba.reshape(1, -1)
+        classes = np.asarray(model.classes_, dtype=object)
+        ordered = np.zeros((proba.shape[0], len(self.label_order)), dtype=float)
+        for idx, label in enumerate(self.label_order):
+            if label in classes:
+                class_index = np.where(classes == label)[0][0]
+                ordered[:, idx] = proba[:, class_index]
+        if ordered.sum(axis=1).sum() == 0:
+            ordered = np.full((proba.shape[0], len(self.label_order)), 1.0 / len(self.label_order), dtype=float)
+        ordered /= ordered.sum(axis=1, keepdims=True)
+        return ordered
 
+    def _get_model_proba(self, model, X_scaled):
+        if hasattr(model, "predict_proba"):
+            proba = model.predict_proba(X_scaled)
+            return self._sort_probability_matrix(proba, model)
+        if hasattr(model, "decision_function"):
+            scores = model.decision_function(X_scaled)
+            if scores.ndim == 1:
+                scores = scores[:, np.newaxis]
+            scores = scores - scores.max(axis=1, keepdims=True)
+            exp_scores = np.exp(scores)
+            proba = exp_scores / exp_scores.sum(axis=1, keepdims=True)
+            if proba.shape[1] != len(self.label_order):
+                classes = np.asarray(model.classes_, dtype=object)
+                ordered = np.zeros((proba.shape[0], len(self.label_order)), dtype=float)
+                for idx, label in enumerate(self.label_order):
+                    if label in classes:
+                        class_index = np.where(classes == label)[0][0]
+                        if class_index < proba.shape[1]:
+                            ordered[:, idx] = proba[:, class_index]
+                if ordered.sum(axis=1).sum() == 0:
+                    ordered = np.full((proba.shape[0], len(self.label_order)), 1.0 / len(self.label_order), dtype=float)
+                else:
+                    ordered /= ordered.sum(axis=1, keepdims=True)
+                return ordered
+            return self._sort_probability_matrix(proba, model)
+        raise AttributeError(f"Model {type(model).__name__} does not expose predict_proba or decision_function.")
+
+    def _weighted_probabilities(self, X_scaled):
+        probability_stack = np.stack([self._get_model_proba(model, X_scaled) for model in self.base_models], axis=0)
+        weighted_proba = np.tensordot(self.weights, probability_stack, axes=([0], [0]))
+        weighted_proba /= weighted_proba.sum(axis=1, keepdims=True)
+        return weighted_proba
+
+    def fit(self, X, y, X_val=None, y_val=None):
+        X = self._normalize_feature_matrix(X)
+        y = np.asarray(y, dtype=object)
+        y = np.char.upper(np.asarray([str(v) for v in y]))
         self.scaler.fit(X)
         X_scaled = self.scaler.transform(X)
 
         for model in self.base_models:
             model.fit(X_scaled, y)
 
-        self.weights = self.weights / np.sum(self.weights)
+        if X_val is not None and y_val is not None:
+            X_val = self._normalize_feature_matrix(X_val)
+            y_val = np.char.upper(np.asarray([str(v) for v in y_val]))
+            val_scaled = self.scaler.transform(X_val)
+            scores = []
+            for model in self.base_models:
+                pred = model.predict(val_scaled)
+                score = f1_score(y_val, pred, average="weighted", labels=self.label_order)
+                scores.append(max(score, 1e-6))
+            self.weights = np.asarray(scores, dtype=float)
+            self.weights = self.weights / self.weights.sum()
+        else:
+            self.weights = np.full(len(self.base_models), 1.0 / len(self.base_models), dtype=float)
         return self
 
     def predict(self, X):
-        X = self._prepare_inference_features(X)
+        """Continuous BUY-SELL conviction score in roughly [-1, 1]."""
+        X = self._normalize_feature_matrix(X)
         X_scaled = self.scaler.transform(X)
+        weighted_proba = self._weighted_probabilities(X_scaled)
+        buy = weighted_proba[:, np.where(self.label_order == "BUY")[0][0]]
+        sell = weighted_proba[:, np.where(self.label_order == "SELL")[0][0]]
+        return buy - sell
 
-        predictions = np.column_stack([model.predict(X_scaled) for model in self.base_models])
-        return np.average(predictions, axis=1, weights=self.weights)
-
-    def get_base_predictions(self, X):
-        X = self._prepare_inference_features(X)
+    def predict_labels(self, X):
+        X = self._normalize_feature_matrix(X)
         X_scaled = self.scaler.transform(X)
-        return [model.predict(X_scaled) for model in self.base_models]
+        weighted_proba = self._weighted_probabilities(X_scaled)
+        predicted_index = weighted_proba.argmax(axis=1)
+        return self.label_order[predicted_index]
 
     def predict_with_confidence(self, X):
-        X = self._prepare_inference_features(X)
+        """Kept for compatibility with signals/composite_score.py and app.py,
+        which were written against the older regression-style API. Returns
+        (predicted_score, signal, confidence, probability_by_label) where
+        predicted_score is the same BUY-SELL conviction score as predict()."""
+        X = self._normalize_feature_matrix(X)
         X_scaled = self.scaler.transform(X)
-        predicted_return = float(self.predict(X)[0])
+        weighted_proba = self._weighted_probabilities(X_scaled)
 
-        if self.classifier is not None and hasattr(self.classifier, "predict_proba"):
-            probabilities = self.classifier.predict_proba(X_scaled)[0]
-            classes = [str(label) for label in self.classifier.classes_]
-            probability_by_label = {
-                label: float(probability)
-                for label, probability in zip(classes, probabilities)
-            }
-            signal = max(probability_by_label, key=probability_by_label.get)
-            confidence = float(probability_by_label[signal])
-            for label in ("BUY", "HOLD", "SELL"):
-                probability_by_label.setdefault(label, 0.0)
-            return predicted_return, signal, confidence, probability_by_label
+        buy_idx = int(np.where(self.label_order == "BUY")[0][0])
+        sell_idx = int(np.where(self.label_order == "SELL")[0][0])
+        predicted_score = float(weighted_proba[0, buy_idx] - weighted_proba[0, sell_idx])
 
-        base_predictions = np.asarray(self.get_base_predictions(X), dtype=float).reshape(len(self.base_models), -1)[:, 0]
-        if predicted_return > 0.05:
-            signal = "BUY"
-        elif predicted_return < -0.05:
-            signal = "SELL"
-        else:
-            signal = "HOLD"
+        signal_idx = int(weighted_proba[0].argmax())
+        signal = str(self.label_order[signal_idx])
+        confidence = float(weighted_proba[0, signal_idx])
+        probability_by_label = {str(label): float(weighted_proba[0, i]) for i, label in enumerate(self.label_order)}
 
-        disagreement = float(np.std(base_predictions))
-        confidence = float(np.clip(1.0 - disagreement / 0.20, 0.0, 1.0))
-        probability_by_label = {"BUY": 0.0, "HOLD": 0.0, "SELL": 0.0}
-        probability_by_label[signal] = confidence
-        remaining = (1.0 - confidence) / 2.0
-        for label in probability_by_label:
-            if label != signal:
-                probability_by_label[label] = remaining
+        return predicted_score, signal, confidence, probability_by_label
 
-        return predicted_return, signal, confidence, probability_by_label
+    def get_base_predictions(self, X):
+        X = self._normalize_feature_matrix(X)
+        X_scaled = self.scaler.transform(X)
+        results = []
+        for model in self.base_models:
+            proba = self._get_model_proba(model, X_scaled)
+            buy = proba[:, np.where(self.label_order == "BUY")[0][0]]
+            sell = proba[:, np.where(self.label_order == "SELL")[0][0]]
+            results.append(buy - sell)
+        return results
 
     def explain(self, X):
-        X = self._prepare_inference_features(X)
+        """Simple feature-ablation explanation on the BUY-SELL conviction
+        score, matching the semantics of the pre-refactor regression model's
+        explain() so app.py's /ensemble/explain route keeps working."""
+        X = self._normalize_feature_matrix(X)
         prediction = float(self.predict(X)[0])
 
         if hasattr(self.scaler, "mean_"):
@@ -206,7 +296,7 @@ class SimpleEnsembleModel:
             baseline = np.zeros(X.shape[1], dtype=float)
 
         contributions = {}
-        for i, feature_name in enumerate(ENSEMBLE_FEATURE_ORDER):
+        for i, feature_name in enumerate(self.feature_names):
             X_ablated = np.array(X, copy=True)
             X_ablated[:, i] = baseline[i]
             ablated_prediction = float(self.predict(X_ablated)[0])
@@ -222,12 +312,16 @@ class SimpleEnsembleModel:
 
     def save(self, filename: str = "ensemble_model.joblib"):
         path = os.path.join(self.model_dir, filename)
-        joblib.dump({
-            "scaler": self.scaler,
-            "models": self.base_models,
-            "weights": self.weights,
-            "classifier": self.classifier,
-        }, path)
+        joblib.dump(
+            {
+                "scaler": self.scaler,
+                "models": self.base_models,
+                "weights": self.weights,
+                "feature_names": self.feature_names,
+                "label_order": self.label_order,
+            },
+            path,
+        )
         return path
 
     def load(self, filename: str = "ensemble_model.joblib"):
@@ -236,5 +330,6 @@ class SimpleEnsembleModel:
         self.scaler = data["scaler"]
         self.base_models = data["models"]
         self.weights = np.asarray(data["weights"], dtype=float)
-        self.classifier = data.get("classifier")
+        self.feature_names = list(data.get("feature_names", ENSEMBLE_FEATURE_ORDER))
+        self.label_order = np.asarray(data.get("label_order", CLASS_LABELS), dtype=object)
         return self

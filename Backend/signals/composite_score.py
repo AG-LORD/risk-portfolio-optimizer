@@ -8,8 +8,8 @@ fused into ONE final BUY/HOLD/SELL per stock, with a confidence score and a
 "why" breakdown suitable for showing directly on a dashboard block.
 
 Weighting:
-  ML classifier (Step 3):        40%  -- forward-looking, learned from data
-  Leading indicators (Step 1):   25%  -- anticipates moves before price confirms
+  ML classifier:                 40%  -- forward-looking, trained on real market data
+  Leading indicators:             25%  -- anticipates moves before price confirms
   Lagging indicators (existing): 20%  -- confirms trend, still a useful sanity check
   Risk penalty (existing CVaR):  15%  -- a risky BUY should not look identical
                                           to a safe BUY
@@ -63,6 +63,7 @@ def compute_composite_signal(
     benchmark_returns: pd.Series,
     model,
     vix_series: Optional[pd.Series] = None,
+    sector_return: float = 0.0,
 ) -> Optional[dict]:
     """
     Parameters
@@ -73,22 +74,25 @@ def compute_composite_signal(
     stock_returns     : daily returns for this stock (from preprocessing.preprocess.calculate_returns)
     benchmark_returns : daily returns for the NIFTY 50 index (from fetch_benchmark_data)
     model             : a fitted optimization.ensemble.SimpleEnsembleModel
-                         (must have been trained with labels, i.e. classifier is not None)
     vix_series        : optional India VIX series, dampens the leading-indicator
                          component market-wide when volatility is elevated
+    sector_return     : precomputed average 5-day return for this stock's sector
+                         (from preprocessing.live_features.compute_sector_returns,
+                         computed once per refresh across the whole universe).
+                         Defaults to 0.0 (neutral) for single-stock callers.
 
     Returns
     -------
     dict with the fused signal, color, score, confidence, and a full
     per-component breakdown -- or None if there isn't enough history yet.
     """
-    # --- ML component (Step 3) ---
-    feature_row = build_feature_row(ticker, ohlcv_df, stock_returns, benchmark_returns)
+    # --- ML component ---
+    feature_row = build_feature_row(ticker, ohlcv_df, stock_returns, benchmark_returns, sector_return=sector_return)
     if feature_row is None:
         return None
     X = np.array([[feature_row[col] for col in FEATURE_COLUMNS]])
 
-    predicted_return, ml_signal, ml_confidence, ml_proba = model.predict_with_confidence(X)
+    predicted_score, ml_signal, ml_confidence, ml_proba = model.predict_with_confidence(X)
     ml_component = SIGNAL_TO_NUM[ml_signal] * ml_confidence
 
     shap_explanation = None
@@ -97,7 +101,7 @@ def compute_composite_signal(
     except Exception:
         pass  # explainability is a bonus, never block the recommendation on it
 
-    # --- Leading component (Step 1) ---
+    # --- Leading component ---
     leading = leading_signal(ohlcv_df, vix_series=vix_series)
     leading_component = _normalize(leading["score"], scale=4)
 
@@ -136,7 +140,7 @@ def compute_composite_signal(
         "color": COLOR_FOR_SIGNAL[final_signal],
         "score": round(float(weighted_score), 3),
         "confidence": final_confidence,
-        "expected_return": round(float(predicted_return), 4),
+        "expected_return": round(float(predicted_score), 4),
         "risk_level": "high" if cvar_95 > 0.06 else ("medium" if cvar_95 > 0.03 else "low"),
         "var_95": round(var_95, 4),
         "cvar_95": round(cvar_95, 4),

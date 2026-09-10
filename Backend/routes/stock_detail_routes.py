@@ -49,11 +49,14 @@ def get_stock_details(ticker):
     base_ticker = ticker.upper().replace(".NS", "")
     full_ticker = f"{base_ticker}.NS"
 
-    ohlcv_by_ticker, valid_tickers, failed = fetch_ohlcv_data([full_ticker], period="1y")
-    if full_ticker not in ohlcv_by_ticker:
+    ohlcv_df = dashboard_routes.DASHBOARD_OHLCV_CACHE.get(full_ticker)
+    if ohlcv_df is None:
+        ohlcv_by_ticker, valid_tickers, failed = fetch_ohlcv_data([full_ticker], period="1y")
+        ohlcv_df = ohlcv_by_ticker.get(full_ticker)
+
+    if ohlcv_df is None:
         return jsonify({"error": f"No market data available for {base_ticker}"}), 404
 
-    ohlcv_df = ohlcv_by_ticker[full_ticker]
     close = ohlcv_df["Close"]
 
     sma20 = close.rolling(window=20, min_periods=20).mean()

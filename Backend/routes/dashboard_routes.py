@@ -11,6 +11,7 @@ every call after that serves the cache.
 """
 
 from datetime import datetime, timezone
+import math
 
 from flask import Blueprint, jsonify
 
@@ -28,13 +29,24 @@ UNIVERSE = list(STOCK_SECTORS.keys())  # NOTE: this list and app.py's NIFTY_50_S
                                         # in a follow-up cleanup, they're not guaranteed identical.
 
 DASHBOARD_CACHE: dict = {}
+DASHBOARD_OHLCV_CACHE: dict = {}
 LAST_REFRESHED_AT = None
 MIN_HISTORY_DAYS = 200  # ~1 trading year, needed for the 252-day beta window in live_features
 
 
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
 def refresh_dashboard():
     """Re-scores every stock in UNIVERSE and replaces DASHBOARD_CACHE."""
-    global DASHBOARD_CACHE, LAST_REFRESHED_AT
+    global DASHBOARD_CACHE, DASHBOARD_OHLCV_CACHE, LAST_REFRESHED_AT
 
     tickers = [f"{t}.NS" for t in UNIVERSE]
     ohlcv_by_ticker, valid_tickers, failed_tickers = fetch_ohlcv_data(tickers, period="1y")
@@ -80,6 +92,7 @@ def refresh_dashboard():
             new_cache[base_ticker] = result
 
     DASHBOARD_CACHE = new_cache
+    DASHBOARD_OHLCV_CACHE = ohlcv_by_ticker
     LAST_REFRESHED_AT = datetime.now(timezone.utc).isoformat()
     return DASHBOARD_CACHE
 
@@ -98,7 +111,7 @@ def get_dashboard():
     return jsonify({
         "last_refreshed_at": LAST_REFRESHED_AT,
         "count": len(stocks),
-        "stocks": stocks,
+        "stocks": _json_safe(stocks),
     })
 
 

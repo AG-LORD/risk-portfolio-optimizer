@@ -50,6 +50,9 @@ def _lagging_component(ohlcv_df: pd.DataFrame) -> dict:
     sma20 = float(close.rolling(window=20, min_periods=20).mean().iloc[-1])
     sma50 = float(close.rolling(window=50, min_periods=50).mean().iloc[-1])
 
+    if not np.isfinite(rsi_value):
+        rsi_value = 50.0
+
     signal = _combined_signal(rsi_value, sma20, sma50, close)
     confidence = _confidence_from_rsi(rsi_value)
 
